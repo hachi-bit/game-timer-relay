@@ -150,10 +150,11 @@
 3. 左の歯車「プロジェクトの設定」
    - タイムゾーンを **(GMT+09:00) 日本標準時 - 東京** にする
 4. エディタの `コード.gs` の中身を消して、後述の「4. コード全文」を貼り付けて保存
-5. `setupProperties` の中の値（合言葉・チャンネルID・子どものユーザーID）を書き換えて実行し、権限を許可する
-   - スクリプトプロパティ `RELAY_URL` / `RELAY_SECRET` / `CHANNEL_ID` / `CHILD_USER_ID` が作られる
-   - 実行後は、コード内の合言葉を消して保存しておく（プロパティには残る）
-   - 古い `DISCORD_BOT_TOKEN` プロパティは自動で消える（トークンはVercelだけに置く）
+5. 関数 `setupProperties` を実行し、権限を許可する
+   - スクリプトプロパティ `RELAY_URL` / `RELAY_SECRET` / `CHANNEL_ID` / `CHILD_USER_ID` の枠が作られる（`RELAY_URL` 以外は「未設定」）
+   - すでに値が入っている項目は上書きしない。古い `DISCORD_BOT_TOKEN` は自動で消える（トークンはVercelだけに置く）
+   - 「プロジェクトの設定 → スクリプト プロパティ」で「未設定」の3つに値を入れて保存
+   - `checkProperties` を実行し「全部入ってる」と出ればOK
 6. `testRelay` を実行 → 「取得OK」「投稿OK」と出て、チャンネルに「中継テストやで」が投稿されればOK
 7. 関数 `setup` を実行する
    - シート「記録」が作られる
@@ -185,8 +186,8 @@
  * 1分ごとのトリガーで main() を実行する
  *
  * 初回の手順:
- *   1. setupProperties() の中の値を書き換えて実行（スクリプトプロパティが作られる）
- *   2. 実行後、setupProperties() の中の合言葉を消して保存（コードに秘密を残さない）
+ *   1. setupProperties() を実行（スクリプトプロパティの枠が「未設定」で作られる）
+ *   2. プロジェクトの設定 → スクリプト プロパティで値を入力し、checkProperties() で確認
  *   3. testRelay() を実行して、中継経由でDiscordと通信できるか確認
  *   4. setup() を実行（シート作成・トリガー登録）
  */
@@ -203,21 +204,36 @@ const NIGHT_INTERVAL_MIN = 10;      // 深夜・開始中でないときの確�
 const C = { START: 1, LIMIT: 2, END: 3, MIN: 4, STATUS: 5, N1: 6, N2: 7, MSGID: 8, NOTE: 9 };
 const ST = { ACTIVE: '開始中', DONE: '終了', FORGOT: '終了忘れ', CANCEL: '取消' };
 
-// ===== スクリプトプロパティの作成（最初に1回だけ実行） =====
+// ===== スクリプトプロパティの枠を作る（最初に1回だけ実行） =====
+// 値はコードに書かず、実行後に「プロジェクトの設定 → スクリプト プロパティ」で入力する。
+// すでに値が入っている項目は上書きしない。
+const PROP_DEFAULTS = {
+  RELAY_URL: 'https://game-timer-relay.vercel.app/api/discord',
+  RELAY_SECRET: '未設定',
+  CHANNEL_ID: '未設定',
+  CHILD_USER_ID: '未設定',
+};
+
 function setupProperties() {
-  const values = {
-    RELAY_URL: 'https://game-timer-relay.vercel.app/api/discord',
-    RELAY_SECRET: 'ここにVercelと同じ合言葉',
-    CHANNEL_ID: 'ここにゲーム記録チャンネルのID',
-    CHILD_USER_ID: 'ここに子ども（テスト中は自分）のユーザーID',
-  };
-  for (const [k, v] of Object.entries(values)) {
-    if (!v || v.startsWith('ここに')) throw new Error(`${k} を書き換えてから実行してな`);
-  }
   const p = PropertiesService.getScriptProperties();
-  p.setProperties(values);
+  const created = [];
+  for (const [k, v] of Object.entries(PROP_DEFAULTS)) {
+    if (!p.getProperty(k)) { p.setProperty(k, v); created.push(k); }
+  }
   p.deleteProperty('DISCORD_BOT_TOKEN'); // トークンはVercel側だけに置く
-  Logger.log('スクリプトプロパティを設定したで：' + Object.keys(values).join(', '));
+  Logger.log(created.length ? '作成したで：' + created.join(', ') : '全部そろってたで');
+  checkProperties();
+}
+
+// 値が入っているか確認する
+function checkProperties() {
+  const p = PropertiesService.getScriptProperties();
+  const missing = Object.keys(PROP_DEFAULTS).filter(k => !p.getProperty(k) || p.getProperty(k) === '未設定');
+  if (missing.length) {
+    Logger.log('「未設定」のままの項目：' + missing.join(', ') + '\nプロジェクトの設定 → スクリプト プロパティで値を入れてな');
+  } else {
+    Logger.log('プロパティは全部入ってるで');
+  }
 }
 
 // 合言葉を作る（VercelとGASの両方に同じ値を入れる）
@@ -461,7 +477,7 @@ function getLastAction() {
 
 function prop(key) {
   const v = PropertiesService.getScriptProperties().getProperty(key);
-  if (!v) throw new Error(`スクリプトプロパティ ${key} が未設定`);
+  if (!v || v === '未設定') throw new Error(`スクリプトプロパティ ${key} が未設定`);
   return v;
 }
 
