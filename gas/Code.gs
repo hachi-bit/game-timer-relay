@@ -122,6 +122,7 @@ function processMessages() {
       if (cmd.type === 'start') handleStart(m, cmd.hours);
       else if (cmd.type === 'end') handleEnd(m);
       else if (cmd.type === 'undo') handleUndo(m);
+      else if (cmd.type === 'redo') handleRedo(m);
     } catch (e) {
       console.error(`処理エラー (${m.id}): ${e}`);
     }
@@ -138,6 +139,7 @@ function parseCommand(text) {
   if (s === '開始3時間' || s === '3時間開始') return { type: 'start', hours: 3 };
   if (s === '終了') return { type: 'end' };
   if (s === '取消' || s === '取り消し' || s === '取消し') return { type: 'undo' };
+  if (s === '取消の取消' || s === '取り消しの取り消し' || s === '取消しの取消し') return { type: 'redo' };
   return null;
 }
 
@@ -167,6 +169,7 @@ function handleStart(m, hours) {
   sh.appendRow([t, hours, '', '', ST.ACTIVE, '', '', "'" + m.id, '']);
   const row = sh.getLastRow();
   setLastAction({ type: 'start', row: row, prevRow: prevRow });
+  setLastUndo(null);
 
   let msg = `開始を受け付けたで（${fmtTime(t)}）。今回は${hours}時間、${fmtTime(addMin(t, hours * 60))}までやで`;
   if (prevRow) msg += '\n前回は終了がなかったから「終了忘れ」で記録したで';
@@ -189,6 +192,7 @@ function handleEnd(m) {
   sh.getRange(active, C.MIN).setValue(min);
   sh.getRange(active, C.STATUS).setValue(ST.DONE);
   setLastAction({ type: 'end', row: active });
+  setLastUndo(null);
 
   const total = weeklyTotal(new Date());
   const rest = WEEKLY_LIMIT_MIN - total;
@@ -205,7 +209,13 @@ function handleUndo(m) {
     reply(m, '取り消せるものがないで');
     return;
   }
+  // 取消の取消で元に戻せるよう、書き換える前の値を控えておく
+  const undo = { action: la };
   if (la.type === 'start') {
+    if (la.prevRow) {
+      undo.prevEnd = sh.getRange(la.prevRow, C.END).getValue().getTime();
+      undo.prevMin = sh.getRange(la.prevRow, C.MIN).getValue();
+    }
     sh.getRange(la.row, C.STATUS).setValue(ST.CANCEL);
     sh.getRange(la.row, C.NOTE).setValue(`取消 ${fmtTime(new Date(m.timestamp))}`);
     let msg = '開始を取り消したで';
@@ -218,6 +228,8 @@ function handleUndo(m) {
     react(m);
     reply(m, msg);
   } else if (la.type === 'end') {
+    undo.end = sh.getRange(la.row, C.END).getValue().getTime();
+    undo.min = sh.getRange(la.row, C.MIN).getValue();
     sh.getRange(la.row, C.END).clearContent();
     sh.getRange(la.row, C.MIN).clearContent();
     sh.getRange(la.row, C.STATUS).setValue(ST.ACTIVE);
@@ -227,6 +239,42 @@ function handleUndo(m) {
     reply(m, `終了を取り消したで。開始中に戻したで（${fmtTime(addMin(start, limitH * 60))}まで）`);
   }
   setLastAction(null);
+  setLastUndo(undo);
+}
+
+// ===== 取消の取消 =====
+function handleRedo(m) {
+  const sh = sheet();
+  const undo = getLastUndo();
+  if (!undo) {
+    reply(m, '取り消せるものがないで');
+    return;
+  }
+  const la = undo.action;
+  if (la.type === 'start') {
+    if (la.prevRow) {
+      sh.getRange(la.prevRow, C.END).setValue(new Date(undo.prevEnd));
+      sh.getRange(la.prevRow, C.MIN).setValue(undo.prevMin);
+      sh.getRange(la.prevRow, C.STATUS).setValue(ST.FORGOT);
+    }
+    sh.getRange(la.row, C.STATUS).setValue(ST.ACTIVE);
+    sh.getRange(la.row, C.NOTE).clearContent();
+    const start = sh.getRange(la.row, C.START).getValue();
+    const limitH = sh.getRange(la.row, C.LIMIT).getValue();
+    react(m);
+    reply(m, `取消を取り消したで。${fmtTime(start)}からの開始中に戻したで（${fmtTime(addMin(start, limitH * 60))}まで）`);
+  } else if (la.type === 'end') {
+    sh.getRange(la.row, C.END).setValue(new Date(undo.end));
+    sh.getRange(la.row, C.MIN).setValue(undo.min);
+    sh.getRange(la.row, C.STATUS).setValue(ST.DONE);
+    const total = weeklyTotal(new Date());
+    const rest = WEEKLY_LIMIT_MIN - total;
+    const restText = rest >= 0 ? `残り${fmtDur(rest)}` : `${fmtDur(-rest)}オーバー`;
+    react(m);
+    reply(m, `取消を取り消したで。${fmtTime(new Date(undo.end))}に終了した記録に戻したで（今回は${fmtDur(undo.min)}、今週の合計は${fmtDur(total)}・${restText}）`);
+  }
+  setLastAction(la);
+  setLastUndo(null);
 }
 
 // ===== 通知チェック =====
@@ -285,6 +333,17 @@ function setLastAction(obj) {
   const p = PropertiesService.getScriptProperties();
   if (obj) p.setProperty('LAST_ACTION', JSON.stringify(obj));
   else p.deleteProperty('LAST_ACTION');
+}
+
+function setLastUndo(obj) {
+  const p = PropertiesService.getScriptProperties();
+  if (obj) p.setProperty('LAST_UNDO', JSON.stringify(obj));
+  else p.deleteProperty('LAST_UNDO');
+}
+
+function getLastUndo() {
+  const v = PropertiesService.getScriptProperties().getProperty('LAST_UNDO');
+  return v ? JSON.parse(v) : null;
 }
 
 function getLastAction() {
