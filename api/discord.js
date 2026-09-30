@@ -13,7 +13,7 @@
  * 環境変数（Vercelで設定）:
  *   DISCORD_BOT_TOKEN : Discordボットのトークン
  *   RELAY_SECRET      : GASと共有する合言葉（長いランダム文字列）
- *   CHANNEL_ID        : 操作を許可するチャンネルID（これ以外への通信は拒否）
+ *   （チャンネル制限なし。ボットに見せるチャンネルはDiscord側の権限で絞る）
  */
 const crypto = require('crypto');
 
@@ -27,17 +27,23 @@ function safeEqual(a, b) {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
-// 許可するパス：指定チャンネルのメッセージ取得・投稿・リアクションのみ
-function isAllowedPath(path, channelId) {
-  const ch = `/channels/${channelId}/messages`;
-  if (path === ch) return true;
-  if (path.startsWith(ch + '?')) return true;
-  return new RegExp(`^${ch}/\\d+/reactions/[^/]+/@me$`).test(path);
+// 許可するパス：メッセージ取得・投稿・リアクションのみ（チャンネルは問わない）
+// どのチャンネルを触れるかは、Discord側でボットに見せるチャンネルで制御する
+function isAllowedPath(method, path) {
+  const m = path.match(/^\/channels\/\d+\/messages(.*)$/);
+  if (!m) return false;
+  const rest = m[1];
+  if (rest === '' || rest.startsWith('?')) return method === 'GET' || method === 'POST';
+  // ボット自身のリアクションを付ける・外す
+  if (/^\/\d+\/reactions\/[^/?]+\/@me$/.test(rest)) return method === 'PUT' || method === 'DELETE';
+  // リアクションした人の一覧を取る（承認判定用）
+  if (/^\/\d+\/reactions\/[^/?]+(\?.*)?$/.test(rest)) return method === 'GET';
+  return false;
 }
 
 module.exports = async (req, res) => {
-  const { DISCORD_BOT_TOKEN, RELAY_SECRET, CHANNEL_ID } = process.env;
-  if (!DISCORD_BOT_TOKEN || !RELAY_SECRET || !CHANNEL_ID) {
+  const { DISCORD_BOT_TOKEN, RELAY_SECRET } = process.env;
+  if (!DISCORD_BOT_TOKEN || !RELAY_SECRET) {
     return res.status(500).json({ error: 'relay not configured' });
   }
   if (req.method !== 'POST') {
@@ -53,7 +59,7 @@ module.exports = async (req, res) => {
   }
   const method = String((payload && payload.method) || '').toUpperCase();
   const path = String((payload && payload.path) || '');
-  if (!METHODS.includes(method) || !isAllowedPath(path, CHANNEL_ID)) {
+  if (!METHODS.includes(method) || !isAllowedPath(method, path)) {
     return res.status(400).json({ error: 'bad request' });
   }
 
