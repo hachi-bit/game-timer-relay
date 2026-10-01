@@ -45,7 +45,8 @@
 
 - `PARENTS` に登録した親が、**ボットの返信**の✅を押したら承認、❌なら却下
 - 子どもやボット自身のリアクションは無視（押した人の一覧をユーザーIDで確認する）
-- 親が✅と❌を両方押しているときは、どちらかが外されるまで保留
+- 親が✅と❌を両方押しているときは、どちらかが外されるまで保留（毎朝のまとめで知らせる）
+- 承認は親のどちらか1人でよい
 - 一度確定したら、あとでリアクションを外しても取り消さない（直したいときはシートを直接編集）
 - 確定したらボットが返信する
   - 承認：「@たろうのゴミ捨てを承認したで +15円（10月の合計 120円）」
@@ -58,6 +59,24 @@
   - 両方承認：朝 15＋10＝25円、夜 10円
   - 朝が却下：夜が1個目扱いで15円
 - 承認した順に数える。合計（その日 n 個なら 15＋10×(n−1) 円）はどの順でも同じ
+
+### 毎朝のまとめ（未承認・保留）
+
+- 毎朝8時30分（毎分の確認の中で、8:30を過ぎて最初の1回）に、**前日までに報告されてまだ確定していないもの**をリストにして投稿する
+  - 保留（親の✅と❌が両方付いている）と、未承認（親がまだ押していない）を分けて出す
+  - 今日の報告は入れない。0件なら何も出さない
+  - 解決するまで毎朝出る
+- 親全員にメンション通知を飛ばす（最初の投稿だけ）
+- 各行に、✅❌を押すボットの返信への**リンク**を付ける（`GUILD_ID` が必要）
+- 件数が多いときは12件ずつに分けて投稿する
+- 例：
+  ```
+  @親1 @親2
+  保留になってる報告が1件あるで（✅と❌の両方が押されてる。どっちか外してな）
+  ・9/30 20:00 @たろう ゴミ捨て×2　→投稿へ
+  まだ承認されてない報告が2件あるで
+  ・9/30 21:00 @じろう 水やり　→投稿へ
+  ```
 
 ### 月まとめ
 
@@ -102,6 +121,7 @@
 - 一般チャンネルのID
 - 子ども2人のユーザーID（ゲーム時間GASの `CHILDREN` と同じ）
 - 親2人のユーザーID
+- サーバーID（サーバー名を右クリック／長押し →「サーバーIDをコピー」。まとめのリンク用）
 
 ### 3-3. GASを設定する
 
@@ -119,6 +139,7 @@
 | `CHANNEL_ID` | 一般チャンネルのID |
 | `CHILDREN` | 子どものユーザーIDをカンマ区切り（`ID:呼び名` も可） |
 | `PARENTS` | 親のユーザーIDをカンマ区切り |
+| `GUILD_ID` | サーバーID（毎朝のまとめで投稿へのリンクを作るのに使う。未設定ならリンクなし） |
 
 7. `checkProperties` で「全部入ってる」と出ればOK
 8. `testRelay` を実行 → チャンネルに「おこづかいボットの中継テストやで」が出ればOK
@@ -127,7 +148,9 @@
    - 1分ごとの `main` と、毎月1日8時台の `monthlyReport` のトリガーが登録される
    - 実行前のチャンネルのメッセージは処理しない
 
-GASが自分で使うプロパティ：`LAST_MESSAGE_ID`（どこまで読んだかのしおり。消さない）
+GASが自分で使うプロパティ：`LAST_MESSAGE_ID`（どこまで読んだかのしおり。消さない）、`DIGEST_DATE`（毎朝のまとめを出した日）
+
+あとからプロパティが増えたとき（例：`GUILD_ID`）は、コードを貼り替えて `setupProperties` を実行すれば枠が追加される（入っている値は上書きしない）
 
 ### 3-4. 動作確認
 
@@ -135,8 +158,9 @@ GASが自分で使うプロパティ：`LAST_MESSAGE_ID`（どこまで読んだ
 2. 親のアカウントで返信の✅を押す → 1〜2分以内に「承認したで +25円」
 3. もう一度 `ゴミ捨て` → ❌を押す → 「却下されたで」
 4. 子どものアカウントで✅を押しても承認されないことを確認
-5. 月まとめを試すときは、エディタから `monthlyReport` を手動実行（前月分が投稿される）
-6. テスト用に自分のIDを `CHILDREN` に足してもよい。終わったら外し、テストの行を消す
+5. 毎朝のまとめを試すときは、前日以前の未承認がある状態でエディタから `dailyDigest` を手動実行
+6. 月まとめを試すときは、エディタから `monthlyReport` を手動実行（前月分が投稿される）
+7. テスト用に自分のIDを `CHILDREN` に足してもよい。終わったら外し、テストの行を消す
 
 ### 3-5. 子どもへのルール説明
 
@@ -157,7 +181,8 @@ GASが自分で使うプロパティ：`LAST_MESSAGE_ID`（どこまで読んだ
  *   1. 子どもがチャンネルに「ゴミ捨て2」「水やり」などと書く
  *   2. ボットが「受け付けたで」と返信し、その返信に自分で✅と❌を付ける
  *   3. 親が✅を押したら承認（金額が確定）、❌なら却下
- *   4. 毎月1日の朝に、前月の承認済み合計を子どもごとに通知する
+ *   4. 毎朝8時30分に、前日までの未承認・保留（✅❌両方）の報告をリストにして親に知らせる
+ *   5. 毎月1日の朝に、前月の承認済み合計を子どもごとに通知する
  *
  * 初回の手順:
  *   1. setupProperties() を実行（スクリプトプロパティの枠が「未設定」で作られる）
@@ -173,6 +198,8 @@ GASが自分で使うプロパティ：`LAST_MESSAGE_ID`（どこまで読んだ
 const SHEET_NAME = '記録';
 const MAX_COUNT = 10;               // 1回の報告で受け付ける最大の個数
 const REPORT_HOUR = 8;              // 月まとめを通知する時（毎月1日）
+const DIGEST_TIME = '08:30';        // 未承認・保留のまとめを知らせる時刻（毎日）
+const DIGEST_PER_POST = 12;         // まとめ1投稿あたりの件数（Discordの文字数上限対策）
 const NIGHT_START = 23;             // 深夜の開始（時）
 const NIGHT_END = 6;                // 深夜の終了（時）
 const NIGHT_INTERVAL_MIN = 10;      // 深夜・未承認がないときの確認間隔（分）
@@ -201,6 +228,7 @@ const PROP_DEFAULTS = {
   CHANNEL_ID: '未設定',
   CHILDREN: '未設定',
   PARENTS: '未設定',
+  GUILD_ID: '未設定',
 };
 
 function setupProperties() {
@@ -267,6 +295,7 @@ function main() {
 
     processMessages();
     checkReactions();
+    maybeDailyDigest(now);
   } finally {
     lock.releaseLock();
   }
@@ -337,19 +366,24 @@ function checkReactions() {
   for (const row of waitingRows()) {
     const botId = String(sh.getRange(row, C.BOTID).getValue());
     try {
-      // ボットの返信を取得して、リアクションの数を見る（ボット自身の1つを除いて増えていたら中身を調べる）
-      const msgs = api('get', `/channels/${prop('CHANNEL_ID')}/messages?around=${botId}&limit=1`) || [];
-      const msg = msgs.find(x => x.id === botId);
-      if (!msg) continue;
-      const okBy = reactedParent(msg, botId, OK, parents);
-      const ngBy = reactedParent(msg, botId, NG, parents);
-      if (okBy && ngBy) continue;           // 両方押されているときは保留
-      if (okBy) approve(row, okBy);
-      else if (ngBy) reject(row, ngBy);
+      const st = reactionState(botId, parents);
+      if (!st) continue;
+      if (st.okBy && st.ngBy) continue;     // 両方押されているときは保留（朝のまとめで知らせる）
+      if (st.okBy) approve(row, st.okBy);
+      else if (st.ngBy) reject(row, st.ngBy);
     } catch (e) {
       console.error(`リアクション確認エラー (行${row}): ${e}`);
     }
   }
+}
+
+// ボットの返信に付いた親の✅❌を調べる。{ okBy, ngBy }（押した親のID、いなければ null）
+// まず返信を取得してリアクションの数を見て、ボット自身の1つより増えていたら押した人の一覧を調べる
+function reactionState(botId, parents) {
+  const msgs = api('get', `/channels/${prop('CHANNEL_ID')}/messages?around=${botId}&limit=1`) || [];
+  const msg = msgs.find(x => x.id === botId);
+  if (!msg) return null;
+  return { okBy: reactedParent(msg, botId, OK, parents), ngBy: reactedParent(msg, botId, NG, parents) };
 }
 
 // その絵文字を押した親のIDを返す（いなければ null）
@@ -395,6 +429,60 @@ function reject(row, parentId) {
   const count = Number(v[C.COUNT - 1]);
   const label = count > 1 ? `${v[C.CHORE - 1]}×${count}` : v[C.CHORE - 1];
   replyTo(String(v[C.BOTID - 1]), `<@${String(v[C.UID - 1])}>の${label}は却下されたで`);
+}
+
+// ===== 毎朝のまとめ（未承認・保留） =====
+// 毎分の確認の中で、その日の DIGEST_TIME を過ぎていてまだ出していなければ出す
+function maybeDailyDigest(now) {
+  const today = dayKey(now);
+  if (Utilities.formatDate(now, 'Asia/Tokyo', 'HH:mm') < DIGEST_TIME) return;
+  const p = PropertiesService.getScriptProperties();
+  if (p.getProperty('DIGEST_DATE') === today) return;
+  p.setProperty('DIGEST_DATE', today); // 失敗しても同じ日に何度も出さない
+  dailyDigest(now);
+}
+
+// 前日までに報告されて、まだ確定していないものをリストにして親に知らせる
+function dailyDigest(now) {
+  const today = dayKey(now || new Date());
+  const sh = sheet();
+  const parents = parentIds();
+  const held = [];
+  const waiting = [];
+  for (const row of waitingRows()) {
+    const v = sh.getRange(row, 1, 1, HEADER.length).getValues()[0];
+    if (!(v[C.AT - 1] instanceof Date) || dayKey(v[C.AT - 1]) >= today) continue; // 今日の報告はまだ出さない
+    const botId = String(v[C.BOTID - 1]);
+    let st = null;
+    try { st = reactionState(botId, parents); } catch (e) { console.error(`まとめの確認エラー (行${row}): ${e}`); }
+    const count = Number(v[C.COUNT - 1]);
+    const label = count > 1 ? `${v[C.CHORE - 1]}×${count}` : v[C.CHORE - 1];
+    const link = msgLink(botId);
+    const line = `・${Utilities.formatDate(v[C.AT - 1], 'Asia/Tokyo', 'M/d HH:mm')} <@${String(v[C.UID - 1])}> ${label}` + (link ? `　[→投稿へ](${link})` : '');
+    (st && st.okBy && st.ngBy ? held : waiting).push(line);
+  }
+  if (!held.length && !waiting.length) return;
+
+  const mention = parents.map(id => `<@${id}>`).join(' ');
+  const sections = [];
+  if (held.length) sections.push({ title: `保留になってる報告が${held.length}件あるで（${OK}と${NG}の両方が押されてる。どっちか外してな）`, lines: held });
+  if (waiting.length) sections.push({ title: `まだ承認されてない報告が${waiting.length}件あるで`, lines: waiting });
+  // 1投稿に収まるよう分けて投稿する。メンション通知は最初の投稿だけ
+  let first = true;
+  for (const sec of sections) {
+    for (let i = 0; i < sec.lines.length; i += DIGEST_PER_POST) {
+      const head = (first ? mention + '\n' : '') + (i === 0 ? sec.title : `${sec.title}（つづき）`);
+      postTo(first ? parents : [], [head].concat(sec.lines.slice(i, i + DIGEST_PER_POST)).join('\n'));
+      first = false;
+    }
+  }
+}
+
+// メッセージへのリンク（GUILD_ID が未設定なら null）
+function msgLink(messageId) {
+  const g = PropertiesService.getScriptProperties().getProperty('GUILD_ID');
+  if (!g || g === '未設定') return null;
+  return `https://discord.com/channels/${g}/${prop('CHANNEL_ID')}/${messageId}`;
 }
 
 // ===== 月まとめ（毎月1日の朝） =====
@@ -520,9 +608,15 @@ function api(method, path, body) {
 
 // 名前はメンション形式で出すが、通知は飛ばさない
 function post(content) {
+  return postTo([], content);
+}
+
+// 指定したユーザーにだけメンション通知を飛ばす投稿（リンクのプレビューは出さない）
+function postTo(pingIds, content) {
   return api('post', `/channels/${prop('CHANNEL_ID')}/messages`, {
     content: content,
-    allowed_mentions: { parse: [] },
+    allowed_mentions: { users: pingIds },
+    flags: 4, // SUPPRESS_EMBEDS
   });
 }
 
@@ -569,4 +663,6 @@ function fmtYen(n) { return Number(n).toLocaleString('ja-JP'); }
 | 報告に返事がない | 書き方が表の通りか。`CHILDREN` にその子のIDがあるか。個数が1〜10か |
 | ✅を押しても承認されない | 押したのがボットの**返信**か（子どもの報告のほうではない）。`PARENTS` に親のIDがあるか。✅と❌を両方押していないか |
 | 「中継に拒否された」 | Vercelの中継が最新版か |
+| 朝のまとめのリンクが出ない | `GUILD_ID` が入っているか |
+| 朝のまとめが来ない | 前日以前の未承認があるか（今日の報告は入らない）。その日すでに出していないか（`DIGEST_DATE`） |
 | 月まとめが来ない | トリガー一覧に `monthlyReport` があるか。タイムゾーンが東京か |

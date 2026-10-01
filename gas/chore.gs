@@ -6,7 +6,8 @@
  *   1. 子どもがチャンネルに「ゴミ捨て2」「水やり」などと書く
  *   2. ボットが「受け付けたで」と返信し、その返信に自分で✅と❌を付ける
  *   3. 親が✅を押したら承認（金額が確定）、❌なら却下
- *   4. 毎月1日の朝に、前月の承認済み合計を子どもごとに通知する
+ *   4. 毎朝8時30分に、前日までの未承認・保留（✅❌両方）の報告をリストにして親に知らせる
+ *   5. 毎月1日の朝に、前月の承認済み合計を子どもごとに通知する
  *
  * 初回の手順:
  *   1. setupProperties() を実行（スクリプトプロパティの枠が「未設定」で作られる）
@@ -22,6 +23,8 @@
 const SHEET_NAME = '記録';
 const MAX_COUNT = 10;               // 1回の報告で受け付ける最大の個数
 const REPORT_HOUR = 8;              // 月まとめを通知する時（毎月1日）
+const DIGEST_TIME = '08:30';        // 未承認・保留のまとめを知らせる時刻（毎日）
+const DIGEST_PER_POST = 12;         // まとめ1投稿あたりの件数（Discordの文字数上限対策）
 const NIGHT_START = 23;             // 深夜の開始（時）
 const NIGHT_END = 6;                // 深夜の終了（時）
 const NIGHT_INTERVAL_MIN = 10;      // 深夜・未承認がないときの確認間隔（分）
@@ -50,6 +53,7 @@ const PROP_DEFAULTS = {
   CHANNEL_ID: '未設定',
   CHILDREN: '未設定',
   PARENTS: '未設定',
+  GUILD_ID: '未設定',
 };
 
 function setupProperties() {
@@ -116,6 +120,7 @@ function main() {
 
     processMessages();
     checkReactions();
+    maybeDailyDigest(now);
   } finally {
     lock.releaseLock();
   }
@@ -186,19 +191,24 @@ function checkReactions() {
   for (const row of waitingRows()) {
     const botId = String(sh.getRange(row, C.BOTID).getValue());
     try {
-      // ボットの返信を取得して、リアクションの数を見る（ボット自身の1つを除いて増えていたら中身を調べる）
-      const msgs = api('get', `/channels/${prop('CHANNEL_ID')}/messages?around=${botId}&limit=1`) || [];
-      const msg = msgs.find(x => x.id === botId);
-      if (!msg) continue;
-      const okBy = reactedParent(msg, botId, OK, parents);
-      const ngBy = reactedParent(msg, botId, NG, parents);
-      if (okBy && ngBy) continue;           // 両方押されているときは保留
-      if (okBy) approve(row, okBy);
-      else if (ngBy) reject(row, ngBy);
+      const st = reactionState(botId, parents);
+      if (!st) continue;
+      if (st.okBy && st.ngBy) continue;     // 両方押されているときは保留（朝のまとめで知らせる）
+      if (st.okBy) approve(row, st.okBy);
+      else if (st.ngBy) reject(row, st.ngBy);
     } catch (e) {
       console.error(`リアクション確認エラー (行${row}): ${e}`);
     }
   }
+}
+
+// ボットの返信に付いた親の✅❌を調べる。{ okBy, ngBy }（押した親のID、いなければ null）
+// まず返信を取得してリアクションの数を見て、ボット自身の1つより増えていたら押した人の一覧を調べる
+function reactionState(botId, parents) {
+  const msgs = api('get', `/channels/${prop('CHANNEL_ID')}/messages?around=${botId}&limit=1`) || [];
+  const msg = msgs.find(x => x.id === botId);
+  if (!msg) return null;
+  return { okBy: reactedParent(msg, botId, OK, parents), ngBy: reactedParent(msg, botId, NG, parents) };
 }
 
 // その絵文字を押した親のIDを返す（いなければ null）
@@ -244,6 +254,60 @@ function reject(row, parentId) {
   const count = Number(v[C.COUNT - 1]);
   const label = count > 1 ? `${v[C.CHORE - 1]}×${count}` : v[C.CHORE - 1];
   replyTo(String(v[C.BOTID - 1]), `<@${String(v[C.UID - 1])}>の${label}は却下されたで`);
+}
+
+// ===== 毎朝のまとめ（未承認・保留） =====
+// 毎分の確認の中で、その日の DIGEST_TIME を過ぎていてまだ出していなければ出す
+function maybeDailyDigest(now) {
+  const today = dayKey(now);
+  if (Utilities.formatDate(now, 'Asia/Tokyo', 'HH:mm') < DIGEST_TIME) return;
+  const p = PropertiesService.getScriptProperties();
+  if (p.getProperty('DIGEST_DATE') === today) return;
+  p.setProperty('DIGEST_DATE', today); // 失敗しても同じ日に何度も出さない
+  dailyDigest(now);
+}
+
+// 前日までに報告されて、まだ確定していないものをリストにして親に知らせる
+function dailyDigest(now) {
+  const today = dayKey(now || new Date());
+  const sh = sheet();
+  const parents = parentIds();
+  const held = [];
+  const waiting = [];
+  for (const row of waitingRows()) {
+    const v = sh.getRange(row, 1, 1, HEADER.length).getValues()[0];
+    if (!(v[C.AT - 1] instanceof Date) || dayKey(v[C.AT - 1]) >= today) continue; // 今日の報告はまだ出さない
+    const botId = String(v[C.BOTID - 1]);
+    let st = null;
+    try { st = reactionState(botId, parents); } catch (e) { console.error(`まとめの確認エラー (行${row}): ${e}`); }
+    const count = Number(v[C.COUNT - 1]);
+    const label = count > 1 ? `${v[C.CHORE - 1]}×${count}` : v[C.CHORE - 1];
+    const link = msgLink(botId);
+    const line = `・${Utilities.formatDate(v[C.AT - 1], 'Asia/Tokyo', 'M/d HH:mm')} <@${String(v[C.UID - 1])}> ${label}` + (link ? `　[→投稿へ](${link})` : '');
+    (st && st.okBy && st.ngBy ? held : waiting).push(line);
+  }
+  if (!held.length && !waiting.length) return;
+
+  const mention = parents.map(id => `<@${id}>`).join(' ');
+  const sections = [];
+  if (held.length) sections.push({ title: `保留になってる報告が${held.length}件あるで（${OK}と${NG}の両方が押されてる。どっちか外してな）`, lines: held });
+  if (waiting.length) sections.push({ title: `まだ承認されてない報告が${waiting.length}件あるで`, lines: waiting });
+  // 1投稿に収まるよう分けて投稿する。メンション通知は最初の投稿だけ
+  let first = true;
+  for (const sec of sections) {
+    for (let i = 0; i < sec.lines.length; i += DIGEST_PER_POST) {
+      const head = (first ? mention + '\n' : '') + (i === 0 ? sec.title : `${sec.title}（つづき）`);
+      postTo(first ? parents : [], [head].concat(sec.lines.slice(i, i + DIGEST_PER_POST)).join('\n'));
+      first = false;
+    }
+  }
+}
+
+// メッセージへのリンク（GUILD_ID が未設定なら null）
+function msgLink(messageId) {
+  const g = PropertiesService.getScriptProperties().getProperty('GUILD_ID');
+  if (!g || g === '未設定') return null;
+  return `https://discord.com/channels/${g}/${prop('CHANNEL_ID')}/${messageId}`;
 }
 
 // ===== 月まとめ（毎月1日の朝） =====
@@ -369,9 +433,15 @@ function api(method, path, body) {
 
 // 名前はメンション形式で出すが、通知は飛ばさない
 function post(content) {
+  return postTo([], content);
+}
+
+// 指定したユーザーにだけメンション通知を飛ばす投稿（リンクのプレビューは出さない）
+function postTo(pingIds, content) {
   return api('post', `/channels/${prop('CHANNEL_ID')}/messages`, {
     content: content,
-    allowed_mentions: { parse: [] },
+    allowed_mentions: { users: pingIds },
+    flags: 4, // SUPPRESS_EMBEDS
   });
 }
 
