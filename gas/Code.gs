@@ -2,23 +2,34 @@
  * ゲーム時間記録ボット（Discord × GAS × Vercel中継）
  * 1分ごとのトリガーで main() を実行する
  *
+ * 子ども複数人に対応（書き込んだ人のユーザーIDで子どもを見分け、記録・取消・通知・集計を子どもごとに分ける）
+ *
  * 初回の手順:
  *   1. setupProperties() を実行（スクリプトプロパティの枠が「未設定」で作られる）
  *   2. プロジェクトの設定 → スクリプト プロパティで値を入力し、checkProperties() で確認
  *   3. testRelay() を実行して、中継経由でDiscordと通信できるか確認
  *   4. setup() を実行（シート作成・トリガー登録）
+ *
+ * 1人用から移行するとき:
+ *   1. スクリプト プロパティに CHILDREN を追加（1人目のIDも忘れずに入れる）
+ *   2. migrateToMultiChild() を1回だけ実行（既存の記録に子どもの列を埋める）
+ *
+ * CHILDREN の書き方: ユーザーIDをカンマ区切り。固定の呼び名を使うなら「ID:呼び名」
+ *   例) 111111111111111111,222222222222222222
+ *   例) 111111111111111111:たろう,222222222222222222:じろう
+ *   呼び名を書かないときは、Discordの表示名（なければユーザー名）をシートに記録する
  */
 
 // ===== 設定 =====
 const SHEET_NAME = '記録';
-const WEEKLY_LIMIT_MIN = 21 * 60;   // 週の上限（分）
 const SECOND_NOTICE_MIN = 10;       // 1回目の通知から2回目までの分数
 const NIGHT_START = 23;             // 深夜の開始（時）
 const NIGHT_END = 6;                // 深夜の終了（時）
 const NIGHT_INTERVAL_MIN = 10;      // 深夜・開始中でないときの確認間隔（分）
 
 // 列番号
-const C = { START: 1, LIMIT: 2, END: 3, MIN: 4, STATUS: 5, N1: 6, N2: 7, MSGID: 8, NOTE: 9 };
+const C = { START: 1, LIMIT: 2, END: 3, MIN: 4, STATUS: 5, N1: 6, N2: 7, MSGID: 8, NOTE: 9, NAME: 10, UID: 11 };
+const HEADER = ['開始日時', '制限時間(h)', '終了日時', 'プレイ時間(分)', '状態', '通知1', '通知2', '開始メッセージID', '備考', '子ども', 'ユーザーID'];
 const ST = { ACTIVE: '開始中', DONE: '終了', FORGOT: '終了忘れ', CANCEL: '取消' };
 
 // ===== スクリプトプロパティの枠を作る（最初に1回だけ実行） =====
@@ -28,7 +39,7 @@ const PROP_DEFAULTS = {
   RELAY_URL: 'https://game-timer-relay.vercel.app/api/discord',
   RELAY_SECRET: '未設定',
   CHANNEL_ID: '未設定',
-  CHILD_USER_ID: '未設定',
+  CHILDREN: '未設定',
 };
 
 function setupProperties() {
@@ -38,6 +49,9 @@ function setupProperties() {
     if (!p.getProperty(k)) { p.setProperty(k, v); created.push(k); }
   }
   p.deleteProperty('DISCORD_BOT_TOKEN'); // トークンはVercel側だけに置く
+  // 1人用からの移行：CHILD_USER_ID があれば CHILDREN の初期値に使う
+  const old = p.getProperty('CHILD_USER_ID');
+  if (old && old !== '未設定' && p.getProperty('CHILDREN') === '未設定') p.setProperty('CHILDREN', old);
   Logger.log(created.length ? '作成したで：' + created.join(', ') : '全部そろってたで');
   checkProperties();
 }
@@ -73,8 +87,9 @@ function setup() {
   let sh = ss.getSheetByName(SHEET_NAME);
   if (!sh) {
     sh = ss.insertSheet(SHEET_NAME);
-    sh.appendRow(['開始日時', '制限時間(h)', '終了日時', 'プレイ時間(分)', '状態', '通知1', '通知2', '開始メッセージID', '備考']);
+    sh.appendRow(HEADER);
     sh.setFrozenRows(1);
+    sh.getRange(2, C.UID, sh.getMaxRows() - 1, 1).setNumberFormat('@');
   }
   // 既存メッセージは処理しない
   const msgs = api('get', `/channels/${prop('CHANNEL_ID')}/messages?limit=1`);
@@ -87,6 +102,32 @@ function setup() {
   Logger.log('セットアップ完了');
 }
 
+// ===== 1人用から複数人への移行（1回だけ実行） =====
+// 子どもの列がない記録を、CHILDREN の1人目の分として埋める。取消用の控えも1人目の分に移す。
+function migrateToMultiChild() {
+  const kids = children();
+  const first = Object.keys(kids)[0];
+  const sh = sheet();
+  sh.getRange(1, 1, 1, HEADER.length).setValues([HEADER]);
+  sh.getRange(2, C.UID, sh.getMaxRows() - 1, 1).setNumberFormat('@');
+  const last = sh.getLastRow();
+  let n = 0;
+  if (last >= 2) {
+    const rng = sh.getRange(2, C.NAME, last - 1, 2);
+    const vals = rng.getValues();
+    vals.forEach(r => {
+      if (!r[1]) { r[0] = kids[first] || ''; r[1] = first; n++; }
+    });
+    rng.setValues(vals);
+  }
+  const p = PropertiesService.getScriptProperties();
+  ['LAST_ACTION', 'LAST_UNDO'].forEach(k => {
+    const v = p.getProperty(k);
+    if (v) { p.setProperty(`${k}_${first}`, v); p.deleteProperty(k); }
+  });
+  Logger.log(`移行完了：${n}行を ${kids[first] || first} の記録にしたで`);
+}
+
 // ===== メイン処理 =====
 function main() {
   const lock = LockService.getScriptLock();
@@ -95,7 +136,7 @@ function main() {
     const now = new Date();
     const h = now.getHours();
     const isNight = (h >= NIGHT_START || h < NIGHT_END);
-    if (isNight && !findActiveRow() && now.getMinutes() % NIGHT_INTERVAL_MIN !== 0) return;
+    if (isNight && activeRows().length === 0 && now.getMinutes() % NIGHT_INTERVAL_MIN !== 0) return;
 
     processMessages();
     checkNotices(new Date());
@@ -109,13 +150,14 @@ function processMessages() {
   const props = PropertiesService.getScriptProperties();
   const last = props.getProperty('LAST_MESSAGE_ID') || '0';
   const msgs = api('get', `/channels/${prop('CHANNEL_ID')}/messages?after=${last}&limit=100`) || [];
+  const kids = children();
   // 古い順に並べる
   msgs.sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
 
   for (const m of msgs) {
     // 二重処理を防ぐため、先に既読位置を進める
     props.setProperty('LAST_MESSAGE_ID', m.id);
-    if (m.author.bot || m.author.id !== prop('CHILD_USER_ID')) continue;
+    if (m.author.bot || !(m.author.id in kids)) continue;
     const cmd = parseCommand(m.content);
     if (!cmd) continue;
     try {
@@ -147,7 +189,8 @@ function parseCommand(text) {
 function handleStart(m, hours) {
   const sh = sheet();
   const t = new Date(m.timestamp);
-  const active = findActiveRow();
+  const uid = m.author.id;
+  const active = findActiveRow(uid);
   let prevRow = null;
 
   if (active) {
@@ -166,12 +209,12 @@ function handleStart(m, hours) {
     prevRow = active;
   }
 
-  sh.appendRow([t, hours, '', '', ST.ACTIVE, '', '', "'" + m.id, '']);
+  sh.appendRow([t, hours, '', '', ST.ACTIVE, '', '', "'" + m.id, '', childName(m.author), "'" + uid]);
   const row = sh.getLastRow();
-  setLastAction({ type: 'start', row: row, prevRow: prevRow });
-  setLastUndo(null);
+  setLastAction(uid, { type: 'start', row: row, prevRow: prevRow });
+  setLastUndo(uid, null);
 
-  let msg = `開始を受け付けたで（${fmtTime(t)}）。今回は${hours}時間、${fmtTime(addMin(t, hours * 60))}までやで`;
+  let msg = `<@${uid}>の開始を受け付けたで（${fmtTime(t)}）。今回は${hours}時間、${fmtTime(addMin(t, hours * 60))}までやで`;
   if (prevRow) msg += '\n前回は終了がなかったから「終了忘れ」で記録したで';
   react(m);
   reply(m, msg);
@@ -180,9 +223,10 @@ function handleStart(m, hours) {
 // ===== 終了 =====
 function handleEnd(m) {
   const sh = sheet();
-  const active = findActiveRow();
+  const uid = m.author.id;
+  const active = findActiveRow(uid);
   if (!active) {
-    reply(m, '開始の記録がないで');
+    reply(m, `<@${uid}>の開始の記録がないで`);
     return;
   }
   const t = new Date(m.timestamp);
@@ -191,20 +235,19 @@ function handleEnd(m) {
   sh.getRange(active, C.END).setValue(t);
   sh.getRange(active, C.MIN).setValue(min);
   sh.getRange(active, C.STATUS).setValue(ST.DONE);
-  setLastAction({ type: 'end', row: active });
-  setLastUndo(null);
+  setLastAction(uid, { type: 'end', row: active });
+  setLastUndo(uid, null);
 
-  const total = weeklyTotal(new Date());
-  const rest = WEEKLY_LIMIT_MIN - total;
-  const restText = rest >= 0 ? `残り${fmtDur(rest)}` : `${fmtDur(-rest)}オーバー`;
+  const total = weeklyTotal(new Date(), uid);
   react(m);
-  reply(m, `終了を受け付けたで（${fmtTime(t)}）。今回は${fmtDur(min)}。今週の合計は${fmtDur(total)}（${restText}）`);
+  reply(m, `<@${uid}>の終了を受け付けたで（${fmtTime(t)}）。今回は${fmtDur(min)}。今週の合計は${fmtDur(total)}`);
 }
 
 // ===== 取消 =====
 function handleUndo(m) {
   const sh = sheet();
-  const la = getLastAction();
+  const uid = m.author.id;
+  const la = getLastAction(uid);
   if (!la) {
     reply(m, '取り消せるものがないで');
     return;
@@ -218,7 +261,7 @@ function handleUndo(m) {
     }
     sh.getRange(la.row, C.STATUS).setValue(ST.CANCEL);
     sh.getRange(la.row, C.NOTE).setValue(`取消 ${fmtTime(new Date(m.timestamp))}`);
-    let msg = '開始を取り消したで';
+    let msg = `<@${uid}>の開始を取り消したで`;
     if (la.prevRow) {
       sh.getRange(la.prevRow, C.END).clearContent();
       sh.getRange(la.prevRow, C.MIN).clearContent();
@@ -236,16 +279,17 @@ function handleUndo(m) {
     const start = sh.getRange(la.row, C.START).getValue();
     const limitH = sh.getRange(la.row, C.LIMIT).getValue();
     react(m);
-    reply(m, `終了を取り消したで。開始中に戻したで（${fmtTime(addMin(start, limitH * 60))}まで）`);
+    reply(m, `<@${uid}>の終了を取り消したで。開始中に戻したで（${fmtTime(addMin(start, limitH * 60))}まで）`);
   }
-  setLastAction(null);
-  setLastUndo(undo);
+  setLastAction(uid, null);
+  setLastUndo(uid, undo);
 }
 
 // ===== 取消の取消 =====
 function handleRedo(m) {
   const sh = sheet();
-  const undo = getLastUndo();
+  const uid = m.author.id;
+  const undo = getLastUndo(uid);
   if (!undo) {
     reply(m, '取り消せるものがないで');
     return;
@@ -262,53 +306,54 @@ function handleRedo(m) {
     const start = sh.getRange(la.row, C.START).getValue();
     const limitH = sh.getRange(la.row, C.LIMIT).getValue();
     react(m);
-    reply(m, `取消を取り消したで。${fmtTime(start)}からの開始中に戻したで（${fmtTime(addMin(start, limitH * 60))}まで）`);
+    reply(m, `<@${uid}>の取消を取り消したで。${fmtTime(start)}からの開始中に戻したで（${fmtTime(addMin(start, limitH * 60))}まで）`);
   } else if (la.type === 'end') {
     sh.getRange(la.row, C.END).setValue(new Date(undo.end));
     sh.getRange(la.row, C.MIN).setValue(undo.min);
     sh.getRange(la.row, C.STATUS).setValue(ST.DONE);
-    const total = weeklyTotal(new Date());
-    const rest = WEEKLY_LIMIT_MIN - total;
-    const restText = rest >= 0 ? `残り${fmtDur(rest)}` : `${fmtDur(-rest)}オーバー`;
+    const total = weeklyTotal(new Date(), uid);
     react(m);
-    reply(m, `取消を取り消したで。${fmtTime(new Date(undo.end))}に終了した記録に戻したで（今回は${fmtDur(undo.min)}、今週の合計は${fmtDur(total)}・${restText}）`);
+    reply(m, `<@${uid}>の取消を取り消したで。${fmtTime(new Date(undo.end))}に終了した記録に戻したで（今回は${fmtDur(undo.min)}、今週の合計は${fmtDur(total)}）`);
   }
-  setLastAction(la);
-  setLastUndo(null);
+  setLastAction(uid, la);
+  setLastUndo(uid, null);
 }
 
 // ===== 通知チェック =====
 function checkNotices(now) {
+  activeRows().forEach(r => checkNotice(now, r));
+}
+
+function checkNotice(now, active) {
   const sh = sheet();
-  const active = findActiveRow();
-  if (!active) return;
   const start = sh.getRange(active, C.START).getValue();
   const limitH = sh.getRange(active, C.LIMIT).getValue();
   const n1 = sh.getRange(active, C.N1).getValue();
   const n2 = sh.getRange(active, C.N2).getValue();
   const limitEnd = addMin(start, limitH * 60);
-  const child = prop('CHILD_USER_ID');
+  const child = String(sh.getRange(active, C.UID).getValue());
 
   if (now >= limitEnd && !n1) {
-    post(`<@${child}> ${limitH}時間たったで！そろそろ「終了」してな（${fmtTime(start)}開始）`);
+    post(child, `<@${child}> ${limitH}時間たったで！そろそろ「終了」してな（${fmtTime(start)}開始）`);
     sh.getRange(active, C.N1).setValue(now);
   } else if (n1 && !n2 && now >= addMin(limitEnd, SECOND_NOTICE_MIN)) {
-    post(`<@${child}> まだ「終了」の記録がないで！${limitH}時間${SECOND_NOTICE_MIN}分たったで（${fmtTime(start)}開始）`);
+    post(child, `<@${child}> まだ「終了」の記録がないで！${limitH}時間${SECOND_NOTICE_MIN}分たったで（${fmtTime(start)}開始）`);
     sh.getRange(active, C.N2).setValue(now);
   }
 }
 
 // ===== 集計 =====
-function weeklyTotal(now) {
+function weeklyTotal(now, uid) {
   const monday = new Date(now);
   monday.setHours(0, 0, 0, 0);
   monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
   const sh = sheet();
   const last = sh.getLastRow();
   if (last < 2) return 0;
-  const rows = sh.getRange(2, 1, last - 1, C.STATUS).getValues();
+  const rows = sh.getRange(2, 1, last - 1, C.UID).getValues();
   return rows
-    .filter(r => r[C.START - 1] instanceof Date && r[C.START - 1] >= monday &&
+    .filter(r => String(r[C.UID - 1]) === uid &&
+                 r[C.START - 1] instanceof Date && r[C.START - 1] >= monday &&
                  (r[C.STATUS - 1] === ST.DONE || r[C.STATUS - 1] === ST.FORGOT))
     .reduce((sum, r) => sum + (Number(r[C.MIN - 1]) || 0), 0);
 }
@@ -318,37 +363,64 @@ function sheet() {
   return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
 }
 
-function findActiveRow() {
+// 開始中の行（全員分）を返す
+function activeRows() {
   const sh = sheet();
   const last = sh.getLastRow();
-  if (last < 2) return null;
+  if (last < 2) return [];
   const st = sh.getRange(2, C.STATUS, last - 1, 1).getValues();
-  for (let i = st.length - 1; i >= 0; i--) {
-    if (st[i][0] === ST.ACTIVE) return i + 2;
+  const rows = [];
+  st.forEach((r, i) => { if (r[0] === ST.ACTIVE) rows.push(i + 2); });
+  return rows;
+}
+
+// その子どもの開始中の行を返す（なければ null）
+function findActiveRow(uid) {
+  const sh = sheet();
+  const rows = activeRows();
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (String(sh.getRange(rows[i], C.UID).getValue()) === uid) return rows[i];
   }
   return null;
 }
 
-function setLastAction(obj) {
+// 取消・取消の取消の控えは子どもごとに持つ
+function setLastAction(uid, obj) { setJsonProp(`LAST_ACTION_${uid}`, obj); }
+function setLastUndo(uid, obj) { setJsonProp(`LAST_UNDO_${uid}`, obj); }
+function getLastAction(uid) { return getJsonProp(`LAST_ACTION_${uid}`); }
+function getLastUndo(uid) { return getJsonProp(`LAST_UNDO_${uid}`); }
+
+function setJsonProp(key, obj) {
   const p = PropertiesService.getScriptProperties();
-  if (obj) p.setProperty('LAST_ACTION', JSON.stringify(obj));
-  else p.deleteProperty('LAST_ACTION');
+  if (obj) p.setProperty(key, JSON.stringify(obj));
+  else p.deleteProperty(key);
 }
 
-function setLastUndo(obj) {
-  const p = PropertiesService.getScriptProperties();
-  if (obj) p.setProperty('LAST_UNDO', JSON.stringify(obj));
-  else p.deleteProperty('LAST_UNDO');
-}
-
-function getLastUndo() {
-  const v = PropertiesService.getScriptProperties().getProperty('LAST_UNDO');
+function getJsonProp(key) {
+  const v = PropertiesService.getScriptProperties().getProperty(key);
   return v ? JSON.parse(v) : null;
 }
 
-function getLastAction() {
-  const v = PropertiesService.getScriptProperties().getProperty('LAST_ACTION');
-  return v ? JSON.parse(v) : null;
+// CHILDREN を { ユーザーID: 固定の呼び名（なければ空文字） } に変換
+function children() {
+  const p = PropertiesService.getScriptProperties();
+  let v = p.getProperty('CHILDREN');
+  if (!v || v === '未設定') v = p.getProperty('CHILD_USER_ID'); // 1人用の設定がまだ残っている場合
+  if (!v || v === '未設定') throw new Error('スクリプトプロパティ CHILDREN が未設定');
+  const map = {};
+  v.split(/[,、，]/).map(x => x.trim()).filter(x => x).forEach(x => {
+    const i = x.search(/[:：]/);
+    const id = (i < 0 ? x : x.slice(0, i)).trim();
+    const name = i < 0 ? '' : x.slice(i + 1).trim();
+    if (/^\d+$/.test(id)) map[id] = name;
+  });
+  if (!Object.keys(map).length) throw new Error('CHILDREN にユーザーIDが入っていないで');
+  return map;
+}
+
+// シートに記録する名前：固定の呼び名 → Discordの表示名 → ユーザー名
+function childName(author) {
+  return children()[author.id] || author.global_name || author.username || author.id;
 }
 
 function prop(key) {
@@ -377,17 +449,18 @@ function api(method, path, body) {
       continue;
     }
     if (code === 401) throw new Error('中継の合言葉（RELAY_SECRET）がVercelと一致していないで');
-    if (code === 400) throw new Error('中継に拒否されたで（CHANNEL_IDがVercelと同じか確認してな）');
+    if (code === 400) throw new Error('中継に拒否されたで（許可されていない操作か、中継が古いかもしれへん）');
     if (code >= 300) throw new Error(`Discord API ${code}: ${text}`);
     return text ? JSON.parse(text) : null;
   }
   throw new Error('Discord APIのレート制限が続いています');
 }
 
-function post(content) {
+// 通知用：指定した子どもにだけメンションの通知を飛ばす
+function post(uid, content) {
   api('post', `/channels/${prop('CHANNEL_ID')}/messages`, {
     content: content,
-    allowed_mentions: { users: [prop('CHILD_USER_ID')] },
+    allowed_mentions: { users: [uid] },
   });
 }
 
