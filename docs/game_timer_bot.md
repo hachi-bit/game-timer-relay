@@ -77,6 +77,10 @@
 
 - **その子の今日（0時区切り）の「勉強終了」がないとき**は、開始は受け付けたうえで、先に「@親 @たろうは今日まだ「勉強終了」が出てないで。ちゃんと勉強した？」と投稿する（`PARENTS` の親にメンション通知）。記録の備考に「勉強おわりなし」と残る
 - 返信例：「@たろうの開始を受け付けたで（11:50）。今回は2時間、13:50までやで」
+- **寝る時間**：日〜木は22時、金・土は22時30分。終了の目安がこれを過ぎるときは、返信の最後に「ただ、寝る時間やから22時までやで」（金・土は「22時30分まで」）と付ける
+  - 開始した時点で寝る時間を過ぎている（または深夜0〜5時の開始）ときは「ただ、もう寝る時間を過ぎてるで」
+  - 付けるのは返信の一言だけ。制限時間の通知（2時間／3時間後）の時刻は変えない
+  - 時刻はコード先頭の `BEDTIME_DEFAULT` `BEDTIME_BY_DAY` で変えられる
 - すでに開始中なら：「もう開始中やで（11:50から、13:50まで）」
 - 前回の終了がないまま、前回の2回目の通知時刻（制限時間＋10分）を過ぎていたら、前回を「終了忘れ」として閉じて新しく開始する
 
@@ -273,6 +277,10 @@ J列の名前は、`CHILDREN` に固定の呼び名を書いていればそれ�
 const SHEET_NAME = '記録';
 const STUDY_SHEET_NAME = '勉強';
 const SECOND_NOTICE_MIN = 10;       // 1回目の通知から2回目までの分数
+// 寝る時間（この時刻までにゲームを終える）。曜日は 1=月 … 7=日
+const BEDTIME_DEFAULT = '22:00';                    // 日〜木
+const BEDTIME_BY_DAY = { 5: '22:30', 6: '22:30' };  // 金・土
+const EARLY_MORNING_HOUR = 5;                       // この時刻より前（深夜0時〜）は、寝る時間を過ぎている扱い
 
 // 列番号
 const C = { START: 1, LIMIT: 2, END: 3, MIN: 4, STATUS: 5, N1: 6, N2: 7, MSGID: 8, NOTE: 9, NAME: 10, UID: 11 };
@@ -496,6 +504,7 @@ function handleStart(m, hours) {
   setLastUndo(uid, null);
 
   let msg = `<@${uid}>のゲーム開始を受け付けたで（${fmtTime(t)}）。今回は${hours}時間、${fmtTime(addMin(t, hours * 60))}までやで`;
+  msg += bedtimeNote(t, addMin(t, hours * 60));
   if (prevRow) msg += '\n前回は終了がなかったから「終了忘れ」で記録したで';
   react(m);
   reply(m, msg);
@@ -506,6 +515,18 @@ function handleFinish(m) {
   const uid = m.author.id;
   if (findActiveRow(uid)) return handleEnd(m);
   reply(m, `<@${uid}> 開始中のゲームはないで。勉強がおわったなら「勉強終了」と書いてな`);
+}
+
+// 終了の目安が寝る時間を過ぎるときに、開始の返信の最後に付ける一言（過ぎないときは空文字）
+function bedtimeNote(start, limitEnd) {
+  const dow = Number(Utilities.formatDate(start, 'Asia/Tokyo', 'u'));
+  const hm = BEDTIME_BY_DAY[dow] || BEDTIME_DEFAULT;
+  const label = hm.replace(/^(\d+):00$/, '$1時').replace(/^(\d+):(\d+)$/, '$1時$2分');
+  const bed = new Date(`${Utilities.formatDate(start, 'Asia/Tokyo', 'yyyy-MM-dd')}T${hm}:00+09:00`);
+  const hour = Number(Utilities.formatDate(start, 'Asia/Tokyo', 'H'));
+  if (start >= bed || hour < EARLY_MORNING_HOUR) return `。ただ、もう寝る時間を過ぎてるで`;
+  if (limitEnd > bed) return `。ただ、寝る時間やから${label}までやで`;
+  return '';
 }
 
 // ===== 終了 =====

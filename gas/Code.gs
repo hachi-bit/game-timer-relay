@@ -29,6 +29,10 @@
 const SHEET_NAME = '記録';
 const STUDY_SHEET_NAME = '勉強';
 const SECOND_NOTICE_MIN = 10;       // 1回目の通知から2回目までの分数
+// 寝る時間（この時刻までにゲームを終える）。曜日は 1=月 … 7=日
+const BEDTIME_DEFAULT = '22:00';                    // 日〜木
+const BEDTIME_BY_DAY = { 5: '22:30', 6: '22:30' };  // 金・土
+const EARLY_MORNING_HOUR = 5;                       // この時刻より前（深夜0時〜）は、寝る時間を過ぎている扱い
 
 // 列番号
 const C = { START: 1, LIMIT: 2, END: 3, MIN: 4, STATUS: 5, N1: 6, N2: 7, MSGID: 8, NOTE: 9, NAME: 10, UID: 11 };
@@ -252,6 +256,7 @@ function handleStart(m, hours) {
   setLastUndo(uid, null);
 
   let msg = `<@${uid}>のゲーム開始を受け付けたで（${fmtTime(t)}）。今回は${hours}時間、${fmtTime(addMin(t, hours * 60))}までやで`;
+  msg += bedtimeNote(t, addMin(t, hours * 60));
   if (prevRow) msg += '\n前回は終了がなかったから「終了忘れ」で記録したで';
   react(m);
   reply(m, msg);
@@ -262,6 +267,18 @@ function handleFinish(m) {
   const uid = m.author.id;
   if (findActiveRow(uid)) return handleEnd(m);
   reply(m, `<@${uid}> 開始中のゲームはないで。勉強がおわったなら「勉強終了」と書いてな`);
+}
+
+// 終了の目安が寝る時間を過ぎるときに、開始の返信の最後に付ける一言（過ぎないときは空文字）
+function bedtimeNote(start, limitEnd) {
+  const dow = Number(Utilities.formatDate(start, 'Asia/Tokyo', 'u'));
+  const hm = BEDTIME_BY_DAY[dow] || BEDTIME_DEFAULT;
+  const label = hm.replace(/^(\d+):00$/, '$1時').replace(/^(\d+):(\d+)$/, '$1時$2分');
+  const bed = new Date(`${Utilities.formatDate(start, 'Asia/Tokyo', 'yyyy-MM-dd')}T${hm}:00+09:00`);
+  const hour = Number(Utilities.formatDate(start, 'Asia/Tokyo', 'H'));
+  if (start >= bed || hour < EARLY_MORNING_HOUR) return `。ただ、もう寝る時間を過ぎてるで`;
+  if (limitEnd > bed) return `。ただ、寝る時間やから${label}までやで`;
+  return '';
 }
 
 // ===== 終了 =====
