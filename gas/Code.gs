@@ -29,9 +29,6 @@
 const SHEET_NAME = '記録';
 const STUDY_SHEET_NAME = '勉強';
 const SECOND_NOTICE_MIN = 10;       // 1回目の通知から2回目までの分数
-const NIGHT_START = 23;             // 深夜の開始（時）
-const NIGHT_END = 6;                // 深夜の終了（時）
-const NIGHT_INTERVAL_MIN = 10;      // 深夜・開始中でないときの確認間隔（分）
 
 // 列番号
 const C = { START: 1, LIMIT: 2, END: 3, MIN: 4, STATUS: 5, N1: 6, N2: 7, MSGID: 8, NOTE: 9, NAME: 10, UID: 11 };
@@ -140,11 +137,6 @@ function main() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) return;
   try {
-    const now = new Date();
-    const h = now.getHours();
-    const isNight = (h >= NIGHT_START || h < NIGHT_END);
-    if (isNight && activeRows().length === 0 && now.getMinutes() % NIGHT_INTERVAL_MIN !== 0) return;
-
     processMessages();
     checkNotices(new Date());
   } finally {

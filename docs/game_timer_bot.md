@@ -121,8 +121,7 @@
 
 ### 深夜の動き
 
-- 23時〜6時は、開始中でなければ**10分ごと**の確認に落として実行時間を節約する
-- 開始中のときは深夜も1分ごとに確認する
+- 深夜も昼と同じく1分ごとに確認する（2026年10月2日に、深夜は10分ごとに落とす設定を廃止）
 
 ### スプレッドシート（シート名「記録」）
 
@@ -274,9 +273,6 @@ J列の名前は、`CHILDREN` に固定の呼び名を書いていればそれ�
 const SHEET_NAME = '記録';
 const STUDY_SHEET_NAME = '勉強';
 const SECOND_NOTICE_MIN = 10;       // 1回目の通知から2回目までの分数
-const NIGHT_START = 23;             // 深夜の開始（時）
-const NIGHT_END = 6;                // 深夜の終了（時）
-const NIGHT_INTERVAL_MIN = 10;      // 深夜・開始中でないときの確認間隔（分）
 
 // 列番号
 const C = { START: 1, LIMIT: 2, END: 3, MIN: 4, STATUS: 5, N1: 6, N2: 7, MSGID: 8, NOTE: 9, NAME: 10, UID: 11 };
@@ -385,11 +381,6 @@ function main() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) return;
   try {
-    const now = new Date();
-    const h = now.getHours();
-    const isNight = (h >= NIGHT_START || h < NIGHT_END);
-    if (isNight && activeRows().length === 0 && now.getMinutes() % NIGHT_INTERVAL_MIN !== 0) return;
-
     processMessages();
     checkNotices(new Date());
   } finally {
@@ -837,7 +828,7 @@ function fmtDur(min) {
 
 ## 5. 制限・注意点
 
-- **反応は最大1分遅れる**（ポーリング方式のため）。深夜で開始中でなければ最大10分
+- **反応は最大1分遅れる**（ポーリング方式のため）
 - GASの無料枠：トリガーの合計実行時間は1日90分まで。1回の実行は1秒前後なので、1分ごとでも収まる見込み
 - ボットのトークンが漏れたら、Developer Portalで「Reset Token」し、Vercelの環境変数を更新してRedeployする
 - 合言葉を変えるときは、VercelとGASのスクリプトプロパティの両方を変え、VercelはRedeployする

@@ -92,7 +92,7 @@
 
 ### 深夜の動き
 
-- 23時〜6時は、未承認がなければ10分ごとの確認に落とす（GASの1日の実行時間の上限対策）
+- 深夜も昼と同じく1分ごとに確認する（2026年10月2日に、深夜は10分ごとに落とす設定を廃止）
 
 ### スプレッドシート（シート名「記録」）
 
@@ -205,9 +205,6 @@ const MAX_COUNT = 10;               // 1回の報告で受け付ける最大の�
 const REPORT_HOUR = 8;              // 月まとめを通知する時（毎月1日）
 const DIGEST_TIME = '08:30';        // 未承認・保留のまとめを知らせる時刻（毎日）
 const DIGEST_PER_POST = 12;         // まとめ1投稿あたりの件数（Discordの文字数上限対策）
-const NIGHT_START = 23;             // 深夜の開始（時）
-const NIGHT_END = 6;                // 深夜の終了（時）
-const NIGHT_INTERVAL_MIN = 10;      // 深夜・未承認がないときの確認間隔（分）
 const OK = '✅';
 const NG = '❌';
 
@@ -293,14 +290,9 @@ function main() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) return;
   try {
-    const now = new Date();
-    const h = now.getHours();
-    const isNight = (h >= NIGHT_START || h < NIGHT_END);
-    if (isNight && waitingRows().length === 0 && now.getMinutes() % NIGHT_INTERVAL_MIN !== 0) return;
-
     processMessages();
     checkReactions();
-    maybeDailyDigest(now);
+    maybeDailyDigest(new Date());
   } finally {
     lock.releaseLock();
   }
