@@ -11,8 +11,8 @@
  *   4. setup() を実行（シート作成・トリガー登録）
  *
  * 勉強の確認:
- *   - 子どもが「おわった」「勉強終わりました」などと書くと、勉強おわりとして記録し、確認の投稿をする
- *   - その日（0時区切り）の「おわった」がないまま「開始」が来たら、開始は受け付けたうえで親にメンションで知らせる
+ *   - 子どもが「勉強終了」（「勉強おわった」なども可）と書くと、勉強おわりとして記録し、確認の投稿をする
+ *   - その日（0時区切り）の「勉強終了」がないまま「ゲーム開始」が来たら、開始は受け付けたうえで親にメンションで知らせる
  *
  * 1人用から移行するとき:
  *   1. setupProperties() を実行（CHILDREN の枠ができ、今の CHILD_USER_ID が自動でコピーされる）
@@ -171,6 +171,7 @@ function processMessages() {
       if (cmd.type === 'study') handleStudy(m);
       else if (cmd.type === 'start') handleStart(m, cmd.hours);
       else if (cmd.type === 'end') handleEnd(m);
+      else if (cmd.type === 'finish') handleFinish(m);
       else if (cmd.type === 'undo') handleUndo(m);
       else if (cmd.type === 'redo') handleRedo(m);
     } catch (e) {
@@ -181,17 +182,24 @@ function processMessages() {
 
 // 書き込みをコマンドに変換（完全一致のみ）
 function parseCommand(text) {
+  // ルールに載せる書き方は「ゲーム開始」「ゲーム開始3時間」「ゲーム終了」「勉強終了」「取消」「取消の取消」。
+  // 付け忘れや言い回しの違いは、ここでゆるく受け付ける
   const s = String(text || '')
     .replace(/[\s\u3000]/g, '')
     .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-    .replace(/三/g, '3');
-  if (s === '開始') return { type: 'start', hours: 2 };
-  if (s === '開始3時間' || s === '3時間開始') return { type: 'start', hours: 3 };
-  if (s === '終了') return { type: 'end' };
+    .replace(/三/g, '3')
+    .replace(/げーむ/g, 'ゲーム').replace(/べんきょう/g, '勉強')
+    .replace(/かいし/g, '開始').replace(/しゅうりょう/g, '終了').replace(/かんりょう/g, '完了');
+  const DONE = '(終了|完了|おわり|終わり|終り|おわった|終わった|終った|おわりました|終わりました|終りました)';
+
+  if (/^(ゲーム)?開始$/.test(s)) return { type: 'start', hours: 2 };
+  if (/^(ゲーム)?(開始3時間|3時間開始)$/.test(s) || s === 'ゲーム3時間開始') return { type: 'start', hours: 3 };
+  if (new RegExp(`^ゲーム(が|は)?${DONE}$`).test(s)) return { type: 'end' };
+  if (new RegExp(`^勉強(が|は)?${DONE}$`).test(s)) return { type: 'study' };
+  // 「ゲーム」「勉強」が付いていない終了：ゲーム開始中ならゲーム終了、そうでなければ聞き返す
+  if (new RegExp(`^${DONE}$`).test(s)) return { type: 'finish' };
   if (s === '取消' || s === '取り消し' || s === '取消し') return { type: 'undo' };
   if (s === '取消の取消' || s === '取り消しの取り消し' || s === '取消しの取消し') return { type: 'redo' };
-  // 勉強おわり：「おわった」「終わりました」など。先頭に「勉強」が付いてもよい
-  if (/^((勉強|べんきょう)(が|は)?)?(おわ|終わ|終)(った|りました)$/.test(s)) return { type: 'study' };
   return null;
 }
 
@@ -204,7 +212,7 @@ function handleStudy(m) {
   reply(m, `<@${uid}>の勉強おわりを受け付けたで（${fmtTime(t)}）\n・やるべき勉強は全部解いた？\n・答え合わせも全部おわった？`);
 }
 
-// その子どもの、その日（0時区切り）の「おわった」があるか
+// その子どもの、その日（0時区切り）の「勉強終了」があるか
 function hasStudyOn(uid, t) {
   const sh = studySheet();
   const last = sh.getLastRow();
@@ -228,7 +236,7 @@ function handleStart(m, hours) {
     const limitEnd = addMin(start, limitH * 60);
     const forgotAt = addMin(limitEnd, SECOND_NOTICE_MIN);
     if (t < forgotAt) {
-      reply(m, `もう開始中やで（${fmtTime(start)}から、${fmtTime(limitEnd)}まで）`);
+      reply(m, `もうゲーム開始中やで（${fmtTime(start)}から、${fmtTime(limitEnd)}まで）`);
       return;
     }
     // 前回を「終了忘れ」で閉じる
@@ -238,12 +246,12 @@ function handleStart(m, hours) {
     prevRow = active;
   }
 
-  // 今日の「おわった」がなければ、開始は受け付けたうえで親に知らせる
+  // 今日の「勉強終了」がなければ、開始は受け付けたうえで親に知らせる
   const studied = hasStudyOn(uid, t);
   if (!studied) {
     const parents = parentIds();
     const mention = parents.map(id => `<@${id}>`).join(' ');
-    replyPing(m, parents, `${mention ? mention + ' ' : ''}<@${uid}>は今日まだ「おわった」が出てないで。ちゃんと勉強した？`);
+    replyPing(m, parents, `${mention ? mention + ' ' : ''}<@${uid}>は今日まだ「勉強終了」が出てないで。ちゃんと勉強した？`);
   }
 
   sh.appendRow([t, hours, '', '', ST.ACTIVE, '', '', "'" + m.id, studied ? '' : '勉強おわりなし', childName(m.author), "'" + uid]);
@@ -251,10 +259,17 @@ function handleStart(m, hours) {
   setLastAction(uid, { type: 'start', row: row, prevRow: prevRow });
   setLastUndo(uid, null);
 
-  let msg = `<@${uid}>の開始を受け付けたで（${fmtTime(t)}）。今回は${hours}時間、${fmtTime(addMin(t, hours * 60))}までやで`;
+  let msg = `<@${uid}>のゲーム開始を受け付けたで（${fmtTime(t)}）。今回は${hours}時間、${fmtTime(addMin(t, hours * 60))}までやで`;
   if (prevRow) msg += '\n前回は終了がなかったから「終了忘れ」で記録したで';
   react(m);
   reply(m, msg);
+}
+
+// ===== 「ゲーム」「勉強」が付いていない終了 =====
+function handleFinish(m) {
+  const uid = m.author.id;
+  if (findActiveRow(uid)) return handleEnd(m);
+  reply(m, `<@${uid}> 開始中のゲームはないで。勉強がおわったなら「勉強終了」と書いてな`);
 }
 
 // ===== 終了 =====
@@ -263,7 +278,7 @@ function handleEnd(m) {
   const uid = m.author.id;
   const active = findActiveRow(uid);
   if (!active) {
-    reply(m, `<@${uid}>の開始の記録がないで`);
+    reply(m, `<@${uid}>のゲーム開始の記録がないで`);
     return;
   }
   const t = new Date(m.timestamp);
@@ -277,7 +292,7 @@ function handleEnd(m) {
 
   const total = weeklyTotal(new Date(), uid);
   react(m);
-  reply(m, `<@${uid}>の終了を受け付けたで（${fmtTime(t)}）。今回は${fmtDur(min)}。今週の合計は${fmtDur(total)}`);
+  reply(m, `<@${uid}>のゲーム終了を受け付けたで（${fmtTime(t)}）。今回は${fmtDur(min)}。今週の合計は${fmtDur(total)}`);
 }
 
 // ===== 取消 =====
@@ -300,7 +315,7 @@ function handleUndo(m) {
     // 備考（「勉強おわりなし」など）は残して、取消の印を足す
     const note = String(sh.getRange(la.row, C.NOTE).getValue() || '');
     sh.getRange(la.row, C.NOTE).setValue((note ? note + ' / ' : '') + `取消 ${fmtTime(new Date(m.timestamp))}`);
-    let msg = `<@${uid}>の開始を取り消したで`;
+    let msg = `<@${uid}>のゲーム開始を取り消したで`;
     if (la.prevRow) {
       sh.getRange(la.prevRow, C.END).clearContent();
       sh.getRange(la.prevRow, C.MIN).clearContent();
@@ -318,7 +333,7 @@ function handleUndo(m) {
     const start = sh.getRange(la.row, C.START).getValue();
     const limitH = sh.getRange(la.row, C.LIMIT).getValue();
     react(m);
-    reply(m, `<@${uid}>の終了を取り消したで。開始中に戻したで（${fmtTime(addMin(start, limitH * 60))}まで）`);
+    reply(m, `<@${uid}>のゲーム終了を取り消したで。開始中に戻したで（${fmtTime(addMin(start, limitH * 60))}まで）`);
   }
   setLastAction(uid, null);
   setLastUndo(uid, undo);
@@ -375,10 +390,10 @@ function checkNotice(now, active) {
   const child = String(sh.getRange(active, C.UID).getValue());
 
   if (now >= limitEnd && !n1) {
-    post(child, `<@${child}> ${limitH}時間たったで！そろそろ「終了」してな（${fmtTime(start)}開始）`);
+    post(child, `<@${child}> ${limitH}時間たったで！そろそろ「ゲーム終了」してな（${fmtTime(start)}開始）`);
     sh.getRange(active, C.N1).setValue(now);
   } else if (n1 && !n2 && now >= addMin(limitEnd, SECOND_NOTICE_MIN)) {
-    post(child, `<@${child}> まだ「終了」の記録がないで！${limitH}時間${SECOND_NOTICE_MIN}分たったで（${fmtTime(start)}開始）`);
+    post(child, `<@${child}> まだ「ゲーム終了」の記録がないで！${limitH}時間${SECOND_NOTICE_MIN}分たったで（${fmtTime(start)}開始）`);
     sh.getRange(active, C.N2).setValue(now);
   }
 }

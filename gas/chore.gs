@@ -3,7 +3,7 @@
  * 1分ごとのトリガーで main() を、毎月1日の朝に monthlyReport() を実行する
  *
  * しくみ:
- *   1. 子どもがチャンネルに「ゴミ捨て2」「水やり」などと書く
+ *   1. 子どもがチャンネルに「ゴミ捨て2完了」「水やり完了」などと書く
  *   2. ボットが「受け付けたで」と返信し、その返信に自分で✅と❌を付ける
  *   3. 親が✅を押したら承認（金額が確定）、❌なら却下
  *   4. 毎朝8時30分に、前日までの未承認・保留（✅❌両方）の報告をリストにして親に知らせる
@@ -147,7 +147,8 @@ function processMessages() {
   }
 }
 
-// 書き込みを報告に変換（完全一致のみ）。例: ゴミ捨て2 / ごみすて２ / ゴミ捨て×2 / 水やり
+// 書き込みを報告に変換（完全一致のみ）。ルールに載せる書き方は「ゴミ捨て完了」「ゴミ捨て2完了」「水やり完了」など
+// 「完了」なし（ゴミ捨て2 / 水やり）や、ごみすて２ / ゴミ捨て×2 / ゴミ捨て完了2 なども受け付ける
 function parseReport(text) {
   let s = String(text || '')
     .replace(/[\s　]/g, '')
@@ -160,11 +161,17 @@ function parseReport(text) {
   const kan = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10 };
   s = s.replace(/[一二三四五六七八九十]/g, c => String(kan[c]));
 
-  const m = s.match(/^(.+?)(?:[x×*]?(\d+)(?:こ|個|かい|回)?)?$/i);
+  s = s.replace(/かんりょう/g, '完了');
+
+  // 形：お手伝い ＋ 個数（省略可）＋「完了」（省略可）。個数は「完了」の前でも後ろでもよい
+  const NUM = '(?:[x×*]?(\\d+)(?:こ|個|かい|回)?)?';
+  const m = s.match(new RegExp(`^(.+?)${NUM}(?:完了)?${NUM}$`, 'i'));
   if (!m) return null;
   const chore = CHORES.find(c => c.words.includes(m[1]));
   if (!chore) return null;
-  const count = m[2] ? Number(m[2]) : 1;
+  if (m[2] && m[3]) return null; // 個数が2か所にあるときは受け付けない
+  const num = m[2] || m[3];
+  const count = num ? Number(num) : 1;
   if (count < 1 || count > MAX_COUNT) return null;
   return { chore: chore, count: count };
 }
