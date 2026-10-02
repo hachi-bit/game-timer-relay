@@ -2,6 +2,7 @@
 
 > 作成日：2026年9月30日
 > 更新：2026年10月1日（子ども2人に対応、週の上限表示をやめた、中継のチャンネル制限を撤廃）
+> 更新：2026年10月2日（勉強おわりの確認を追加）
 > 目的：子どものゲーム開始・終了をDiscordで記録し、制限時間を過ぎたら通知する。週ごとの合計も自動で出す。
 
 ---
@@ -49,13 +50,22 @@
 | `終了` | 終了 |
 | `取消` / `取り消し` / `取消し` | 直前の開始または終了を取り消す |
 | `取消の取消` / `取り消しの取り消し` | 直前の取消をなかったことにする |
+| `おわった` / `終わった` / `おわりました` / `終わりました`（先頭に `勉強` `勉強が` が付いてもOK） | 勉強おわりを記録し、確認の投稿をする |
 
 - 受け付けたら元のメッセージに✅をつけ、返信する
 - 時刻は**Discordに書き込んだ時刻**を使う（GASの確認が1分遅れても時刻はずれない）
 - 1分の間に複数のメッセージがあっても、**書かれた順に1件ずつ処理**し、それぞれに返信する
 
+### 勉強おわり
+
+- ルール：勉強が終わってからゲームをする。子どもは勉強が終わったら「おわった」と書く
+- 返信例：「@たろうの勉強おわりを受け付けたで（17:30）／・やるべき勉強は全部解いた？／・答え合わせも全部おわった？」
+- 確認は投稿するだけ（子どもの返事は求めない）
+- シート「勉強」に記録する。取消の対象にはならない
+
 ### 開始
 
+- **その子の今日（0時区切り）の「おわった」がないとき**は、開始は受け付けたうえで、先に「@親 @たろうは今日まだ「おわった」が出てないで。ちゃんと勉強した？」と投稿する（`PARENTS` の親にメンション通知）。記録の備考に「勉強おわりなし」と残る
 - 返信例：「@たろうの開始を受け付けたで（11:50）。今回は2時間、13:50までやで」
 - すでに開始中なら：「もう開始中やで（11:50から、13:50まで）」
 - 前回の終了がないまま、前回の2回目の通知時刻（制限時間＋10分）を過ぎていたら、前回を「終了忘れ」として閉じて新しく開始する
@@ -122,6 +132,8 @@
 
 親が手で直したいときは、この表を直接編集すればよい（状態が「開始中」の行は**子ども1人につき**1行以下にすること。K列のユーザーIDは消さない）。
 
+シート「勉強」（自動で作られる）：A 日時／B 子ども／C ユーザーID／D メッセージID
+
 J列の名前は、`CHILDREN` に固定の呼び名を書いていればそれ、なければDiscordの表示名（なければユーザー名）。
 
 ---
@@ -176,7 +188,8 @@ J列の名前は、`CHILDREN` に固定の呼び名を書いていればそれ�
    - タイムゾーンを **(GMT+09:00) 日本標準時 - 東京** にする
 4. エディタの `コード.gs` の中身を消して、後述の「4. コード全文」を貼り付けて保存
 5. 関数 `setupProperties` を実行し、権限を許可する
-   - スクリプトプロパティ `RELAY_URL` / `RELAY_SECRET` / `CHANNEL_ID` / `CHILDREN` の枠が作られる（`RELAY_URL` 以外は「未設定」）
+   - スクリプトプロパティ `RELAY_URL` / `RELAY_SECRET` / `CHANNEL_ID` / `CHILDREN` / `PARENTS` の枠が作られる（`RELAY_URL` 以外は「未設定」）
+   - `PARENTS` は親のユーザーIDをカンマ区切りで入れる（勉強おわりなしで開始したときの通知先。未設定ならメンションなしで投稿する）
    - `CHILDREN` は子どものユーザーIDをカンマ区切りで入れる（例：`111…,222…`）。固定の呼び名を使うなら `111…:たろう,222…:じろう`
    - すでに値が入っている項目は上書きしない。古い `DISCORD_BOT_TOKEN` は自動で消える（トークンはVercelだけに置く）
    - 「プロジェクトの設定 → スクリプト プロパティ」で「未設定」の3つに値を入れて保存
@@ -211,7 +224,8 @@ J列の名前は、`CHILDREN` に固定の呼び名を書いていればそれ�
 
 - ゲームを始めるときは「開始」、終わるときは「終了」だけを書く
 - 3時間の日は「開始3時間」
-- 間違えたら「取消」、取消を間違えたら「取消の取消」
+- 勉強が終わったら「おわった」と書く。それから「開始」
+- 間違えたら「取消」、取消を取り消したいときは「取消の取消」
 - ✅と返信が来たら受け付け完了。来なかったら（1分以上待っても）親に言う
 
 ---
@@ -231,6 +245,10 @@ J列の名前は、`CHILDREN` に固定の呼び名を書いていればそれ�
  *   3. testRelay() を実行して、中継経由でDiscordと通信できるか確認
  *   4. setup() を実行（シート作成・トリガー登録）
  *
+ * 勉強の確認:
+ *   - 子どもが「おわった」「勉強終わりました」などと書くと、勉強おわりとして記録し、確認の投稿をする
+ *   - その日（0時区切り）の「おわった」がないまま「開始」が来たら、開始は受け付けたうえで親にメンションで知らせる
+ *
  * 1人用から移行するとき:
  *   1. setupProperties() を実行（CHILDREN の枠ができ、今の CHILD_USER_ID が自動でコピーされる）
  *   2. スクリプト プロパティで CHILDREN の後ろに「,2人目のID」を書き足す
@@ -244,6 +262,7 @@ J列の名前は、`CHILDREN` に固定の呼び名を書いていればそれ�
 
 // ===== 設定 =====
 const SHEET_NAME = '記録';
+const STUDY_SHEET_NAME = '勉強';
 const SECOND_NOTICE_MIN = 10;       // 1回目の通知から2回目までの分数
 const NIGHT_START = 23;             // 深夜の開始（時）
 const NIGHT_END = 6;                // 深夜の終了（時）
@@ -262,6 +281,7 @@ const PROP_DEFAULTS = {
   RELAY_SECRET: '未設定',
   CHANNEL_ID: '未設定',
   CHILDREN: '未設定',
+  PARENTS: '未設定',   // 親のユーザーID（カンマ区切り）。勉強おわりなしで開始したときの通知先
 };
 
 function setupProperties() {
@@ -383,7 +403,8 @@ function processMessages() {
     const cmd = parseCommand(m.content);
     if (!cmd) continue;
     try {
-      if (cmd.type === 'start') handleStart(m, cmd.hours);
+      if (cmd.type === 'study') handleStudy(m);
+      else if (cmd.type === 'start') handleStart(m, cmd.hours);
       else if (cmd.type === 'end') handleEnd(m);
       else if (cmd.type === 'undo') handleUndo(m);
       else if (cmd.type === 'redo') handleRedo(m);
@@ -404,7 +425,28 @@ function parseCommand(text) {
   if (s === '終了') return { type: 'end' };
   if (s === '取消' || s === '取り消し' || s === '取消し') return { type: 'undo' };
   if (s === '取消の取消' || s === '取り消しの取り消し' || s === '取消しの取消し') return { type: 'redo' };
+  // 勉強おわり：「おわった」「終わりました」など。先頭に「勉強」が付いてもよい
+  if (/^((勉強|べんきょう)(が|は)?)?(おわ|終わ|終)(った|りました)$/.test(s)) return { type: 'study' };
   return null;
+}
+
+// ===== 勉強おわり =====
+function handleStudy(m) {
+  const uid = m.author.id;
+  const t = new Date(m.timestamp);
+  studySheet().appendRow([t, childName(m.author), "'" + uid, "'" + m.id]);
+  react(m);
+  reply(m, `<@${uid}>の勉強おわりを受け付けたで（${fmtTime(t)}）\n・やるべき勉強は全部解いた？\n・答え合わせも全部おわった？`);
+}
+
+// その子どもの、その日（0時区切り）の「おわった」があるか
+function hasStudyOn(uid, t) {
+  const sh = studySheet();
+  const last = sh.getLastRow();
+  if (last < 2) return false;
+  const day = dayKey(t);
+  return sh.getRange(2, 1, last - 1, 3).getValues()
+    .some(r => String(r[2]) === uid && r[0] instanceof Date && dayKey(r[0]) === day);
 }
 
 // ===== 開始 =====
@@ -431,7 +473,15 @@ function handleStart(m, hours) {
     prevRow = active;
   }
 
-  sh.appendRow([t, hours, '', '', ST.ACTIVE, '', '', "'" + m.id, '', childName(m.author), "'" + uid]);
+  // 今日の「おわった」がなければ、開始は受け付けたうえで親に知らせる
+  const studied = hasStudyOn(uid, t);
+  if (!studied) {
+    const parents = parentIds();
+    const mention = parents.map(id => `<@${id}>`).join(' ');
+    replyPing(m, parents, `${mention ? mention + ' ' : ''}<@${uid}>は今日まだ「おわった」が出てないで。ちゃんと勉強した？`);
+  }
+
+  sh.appendRow([t, hours, '', '', ST.ACTIVE, '', '', "'" + m.id, studied ? '' : '勉強おわりなし', childName(m.author), "'" + uid]);
   const row = sh.getLastRow();
   setLastAction(uid, { type: 'start', row: row, prevRow: prevRow });
   setLastUndo(uid, null);
@@ -482,7 +532,9 @@ function handleUndo(m) {
       undo.prevMin = sh.getRange(la.prevRow, C.MIN).getValue();
     }
     sh.getRange(la.row, C.STATUS).setValue(ST.CANCEL);
-    sh.getRange(la.row, C.NOTE).setValue(`取消 ${fmtTime(new Date(m.timestamp))}`);
+    // 備考（「勉強おわりなし」など）は残して、取消の印を足す
+    const note = String(sh.getRange(la.row, C.NOTE).getValue() || '');
+    sh.getRange(la.row, C.NOTE).setValue((note ? note + ' / ' : '') + `取消 ${fmtTime(new Date(m.timestamp))}`);
     let msg = `<@${uid}>の開始を取り消したで`;
     if (la.prevRow) {
       sh.getRange(la.prevRow, C.END).clearContent();
@@ -524,7 +576,9 @@ function handleRedo(m) {
       sh.getRange(la.prevRow, C.STATUS).setValue(ST.FORGOT);
     }
     sh.getRange(la.row, C.STATUS).setValue(ST.ACTIVE);
-    sh.getRange(la.row, C.NOTE).clearContent();
+    // 取消の印だけ消す
+    const note = String(sh.getRange(la.row, C.NOTE).getValue() || '').replace(/( \/ )?取消 [^/]*$/, '');
+    sh.getRange(la.row, C.NOTE).setValue(note);
     const start = sh.getRange(la.row, C.START).getValue();
     const limitH = sh.getRange(la.row, C.LIMIT).getValue();
     react(m);
@@ -585,6 +639,19 @@ function sheet() {
   return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
 }
 
+// 勉強おわりの記録シート（なければ作る）
+function studySheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName(STUDY_SHEET_NAME);
+  if (!sh) {
+    sh = ss.insertSheet(STUDY_SHEET_NAME);
+    sh.appendRow(['日時', '子ども', 'ユーザーID', 'メッセージID']);
+    sh.setFrozenRows(1);
+    sh.getRange(2, 3, sh.getMaxRows() - 1, 2).setNumberFormat('@');
+  }
+  return sh;
+}
+
 // 開始中の行（全員分）を返す
 function activeRows() {
   const sh = sheet();
@@ -638,6 +705,13 @@ function children() {
   });
   if (!Object.keys(map).length) throw new Error('CHILDREN にユーザーIDが入っていないで');
   return map;
+}
+
+// 親のユーザーID（PARENTS が未設定なら空。その場合はメンションなしで知らせる）
+function parentIds() {
+  const v = PropertiesService.getScriptProperties().getProperty('PARENTS');
+  if (!v || v === '未設定') return [];
+  return v.split(/[,、，]/).map(x => x.trim()).filter(x => /^\d+$/.test(x));
 }
 
 // シートに記録する名前：固定の呼び名 → Discordの表示名 → ユーザー名
@@ -694,6 +768,15 @@ function reply(m, content) {
   });
 }
 
+// 返信しつつ、指定したユーザーにだけメンション通知を飛ばす
+function replyPing(m, pingIds, content) {
+  api('post', `/channels/${prop('CHANNEL_ID')}/messages`, {
+    content: content,
+    message_reference: { message_id: m.id, fail_if_not_exists: false },
+    allowed_mentions: { users: pingIds, replied_user: false },
+  });
+}
+
 function react(m) {
   try {
     api('put', `/channels/${prop('CHANNEL_ID')}/messages/${m.id}/reactions/${encodeURIComponent('✅')}/@me`);
@@ -703,6 +786,10 @@ function react(m) {
 }
 
 // ===== 表示用 =====
+function dayKey(d) {
+  return Utilities.formatDate(d, 'Asia/Tokyo', 'yyyyMMdd');
+}
+
 function addMin(d, min) {
   return new Date(d.getTime() + min * 60000);
 }
