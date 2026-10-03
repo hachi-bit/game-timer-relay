@@ -11,7 +11,7 @@
  *   4. setup() を実行（シート作成・トリガー登録）
  *
  * 勉強の確認:
- *   - 子どもが「勉強終了」（「勉強おわった」なども可）と書くと、勉強おわりとして記録し、確認の投稿をする
+ *   - 子どもが「勉強終了」と書くと、勉強おわりとして記録し、確認の投稿をする
  *   - その日（0時区切り）の「勉強終了」がないまま「ゲーム開始」が来たら、開始は受け付けたうえで親にメンションで知らせる
  *
  * 1人用から移行するとき:
@@ -167,7 +167,7 @@ function processMessages() {
       if (cmd.type === 'study') handleStudy(m);
       else if (cmd.type === 'start') handleStart(m, cmd.hours);
       else if (cmd.type === 'end') handleEnd(m);
-      else if (cmd.type === 'finish') handleFinish(m);
+      else if (cmd.type === 'ask') handleAsk(m, cmd.word);
       else if (cmd.type === 'undo') handleUndo(m);
       else if (cmd.type === 'redo') handleRedo(m);
     } catch (e) {
@@ -178,22 +178,22 @@ function processMessages() {
 
 // 書き込みをコマンドに変換（完全一致のみ）
 function parseCommand(text) {
-  // ルールに載せる書き方は「ゲーム開始」「ゲーム開始3時間」「ゲーム終了」「勉強終了」「取消」「取消の取消」。
-  // 付け忘れや言い回しの違いは、ここでゆるく受け付ける
+  // 書き方のルール：開始と終了があるもの（ゲーム・勉強）は、最後が「開始」か「終了」で終わる。
+  // 受け付けるのはルール通りの形だけ（ひらがな・全角数字・空白の違いは吸収する）。
+  // 「開始」「終了」だけのときは、何のことか聞き返す。それ以外の書き方には反応しない
   const s = String(text || '')
     .replace(/[\s\u3000]/g, '')
     .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
     .replace(/三/g, '3')
     .replace(/げーむ/g, 'ゲーム').replace(/べんきょう/g, '勉強')
-    .replace(/かいし/g, '開始').replace(/しゅうりょう/g, '終了').replace(/かんりょう/g, '完了');
-  const DONE = '(終了|完了|おわり|終わり|終り|おわった|終わった|終った|おわりました|終わりました|終りました)';
+    .replace(/かいし/g, '開始').replace(/しゅうりょう/g, '終了').replace(/じかん/g, '時間');
 
-  if (/^(ゲーム)?開始$/.test(s)) return { type: 'start', hours: 2 };
-  if (/^(ゲーム)?(開始3時間|3時間開始)$/.test(s) || s === 'ゲーム3時間開始') return { type: 'start', hours: 3 };
-  if (new RegExp(`^ゲーム(が|は)?${DONE}$`).test(s)) return { type: 'end' };
-  if (new RegExp(`^勉強(が|は)?${DONE}$`).test(s)) return { type: 'study' };
-  // 「ゲーム」「勉強」が付いていない終了：ゲーム開始中ならゲーム終了、そうでなければ聞き返す
-  if (new RegExp(`^${DONE}$`).test(s)) return { type: 'finish' };
+  if (s === 'ゲーム開始') return { type: 'start', hours: 2 };
+  if (s === 'ゲーム3時間開始') return { type: 'start', hours: 3 };
+  if (s === 'ゲーム終了') return { type: 'end' };
+  if (s === '勉強終了') return { type: 'study' };
+  if (s === '開始' || s === '3時間開始') return { type: 'ask', word: '開始' };
+  if (s === '終了') return { type: 'ask', word: '終了' };
   if (s === '取消' || s === '取り消し' || s === '取消し') return { type: 'undo' };
   if (s === '取消の取消' || s === '取り消しの取り消し' || s === '取消しの取消し') return { type: 'redo' };
   return null;
@@ -262,11 +262,11 @@ function handleStart(m, hours) {
   reply(m, msg);
 }
 
-// ===== 「ゲーム」「勉強」が付いていない終了 =====
-function handleFinish(m) {
+// ===== 「開始」「終了」だけのとき：何のことか聞き返す（記録はしない） =====
+function handleAsk(m, word) {
   const uid = m.author.id;
-  if (findActiveRow(uid)) return handleEnd(m);
-  reply(m, `<@${uid}> 開始中のゲームはないで。勉強がおわったなら「勉強終了」と書いてな`);
+  if (word === '開始') reply(m, `<@${uid}> なんの開始？ ゲームなら「ゲーム開始」と書いてな`);
+  else reply(m, `<@${uid}> なんの終了？ 「ゲーム終了」か「勉強終了」と書いてな`);
 }
 
 // 終了の目安が寝る時間を過ぎるときに、開始の返信の最後に付ける一言（過ぎないときは空文字）

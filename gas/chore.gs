@@ -32,7 +32,7 @@ const NG = '❌';
 //   first: その日（0時区切り）の1個目の金額、next: 2個目以降の1個あたりの金額
 //   words: 報告で受け付ける書き方（ひらがな・カタカナ・漢字の違いは自動で吸収する）
 const CHORES = [
-  { name: 'ゴミ捨て',   first: 15, next: 10, words: ['ごみすて', 'ごみだし'] },
+  { name: 'ゴミ捨て',   first: 15, next: 10, words: ['ごみすて'] },
   { name: '布団しき',   first: 10, next: 10, words: ['ふとんしき', 'ふとんし'] },
   { name: '布団たたみ', first: 10, next: 10, words: ['ふとんたたみ', 'ふとんたた'] },
   { name: '水やり',     first: 15, next: 15, words: ['みずやり'] },
@@ -132,38 +132,38 @@ function processMessages() {
     const cmd = parseReport(m.content);
     if (!cmd) continue; // 書き方が違うときは無反応
     try {
-      handleReport(m, cmd);
+      if (cmd.ask) reply(m, `<@${m.author.id}> なにが完了？ 「ゴミ捨て完了」みたいに書いてな`);
+      else handleReport(m, cmd);
     } catch (e) {
       console.error(`処理エラー (${m.id}): ${e}`);
     }
   }
 }
 
-// 書き込みを報告に変換（完全一致のみ）。ルールに載せる書き方は「ゴミ捨て完了」「ゴミ捨て2完了」「水やり完了」など
-// 「完了」なし（ゴミ捨て2 / 水やり）や、ごみすて２ / ゴミ捨て×2 / ゴミ捨て完了2 なども受け付ける
+// 書き込みを報告に変換。書き方のルール：お手伝いは最後が「完了」で終わる
+//   例：ゴミ捨て完了 / ゴミ捨て2完了 / 布団しき完了 / 水やり完了
+// 受け付けるのはルール通りの形だけ（ひらがな・カタカナ・漢字、全角数字、空白の違いは吸収する）。
+// 「完了」だけのときは、何のことか聞き返す。それ以外の書き方には反応しない
 function parseReport(text) {
   let s = String(text || '')
-    .replace(/[\s　]/g, '')
+    .replace(/[\s\u3000]/g, '')
     .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
     .replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60)); // カタカナ → ひらがな
   // 漢字の書き方をひらがなにそろえる
-  [['捨', 'す'], ['出', 'だ'], ['布団', 'ふとん'], ['敷', 'し'], ['畳', 'たた'], ['水', 'みず'], ['遣', 'や']]
+  [['捨', 'す'], ['布団', 'ふとん'], ['敷', 'し'], ['畳', 'たた'], ['水', 'みず'], ['遣', 'や']]
     .forEach(([a, b]) => { s = s.split(a).join(b); });
   // 漢数字
   const kan = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10 };
   s = s.replace(/[一二三四五六七八九十]/g, c => String(kan[c]));
-
   s = s.replace(/かんりょう/g, '完了');
 
-  // 形：お手伝い ＋ 個数（省略可）＋「完了」（省略可）。個数は「完了」の前でも後ろでもよい
-  const NUM = '(?:[x×*]?(\\d+)(?:こ|個|かい|回)?)?';
-  const m = s.match(new RegExp(`^(.+?)${NUM}(?:完了)?${NUM}$`, 'i'));
+  if (s === '完了') return { ask: true };
+  // 形：お手伝い ＋ 個数（省略可）＋「完了」
+  const m = s.match(/^(.+?)(\d+)?完了$/);
   if (!m) return null;
   const chore = CHORES.find(c => c.words.includes(m[1]));
   if (!chore) return null;
-  if (m[2] && m[3]) return null; // 個数が2か所にあるときは受け付けない
-  const num = m[2] || m[3];
-  const count = num ? Number(num) : 1;
+  const count = m[2] ? Number(m[2]) : 1;
   if (count < 1 || count > MAX_COUNT) return null;
   return { chore: chore, count: count };
 }
