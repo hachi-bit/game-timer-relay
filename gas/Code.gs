@@ -205,7 +205,7 @@ function handleStudy(m) {
   const t = new Date(m.timestamp);
   studySheet().appendRow([t, childName(m.author), "'" + uid, "'" + m.id]);
   react(m);
-  reply(m, `<@${uid}>の勉強おわりを受け付けたで（${fmtTime(t)}）\n・やるべき勉強は全部解いた？\n・答え合わせも全部おわった？`);
+  reply(m, `<@${uid}>の勉強おわりを受け付けたで（${fmtTime(t)}）\n・やるべき勉強は全部解いた？\n・答え合わせも全部おわった？\n・おわったものは提出した？`);
 }
 
 // その子どもの、その日（0時区切り）の「勉強終了」があるか
