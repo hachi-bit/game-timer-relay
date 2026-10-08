@@ -14,6 +14,12 @@
  *   - 子どもが「勉強終了」と書くと、勉強おわりとして記録し、確認の投稿をする
  *   - その日（0時区切り）の「勉強終了」がないまま「ゲーム開始」が来たら、開始は受け付けたうえで親にメンションで知らせる
  *
+ * ゴミ捨ての確認:
+ *   - ゴミの日（GARBAGE_DAYS）に、その日まだ誰も「ゴミ捨て完了」を書いていなければ、
+ *     「勉強終了」「ゲーム開始」の返信の最後にゴミ捨ての報告をしたか聞く一言を付ける
+ *   - 「ゴミ捨て完了」はおこづかいボットの書き込みだが、同じチャンネルなのでこのボットも見て日付を覚えておく
+ *     （子どものどちらかが書けば、その日は2人とも聞かない）
+ *
  * 1人用から移行するとき:
  *   1. setupProperties() を実行（CHILDREN の枠ができ、今の CHILD_USER_ID が自動でコピーされる）
  *   2. スクリプト プロパティで CHILDREN の後ろに「,2人目のID」を書き足す
@@ -33,6 +39,8 @@ const SECOND_NOTICE_MIN = 10;       // 1回目の通知から2回目までの分
 const BEDTIME_DEFAULT = '22:00';                    // 日〜木
 const BEDTIME_BY_DAY = { 5: '22:30', 6: '22:30' };  // 金・土
 const EARLY_MORNING_HOUR = 5;                       // この時刻より前（深夜0時〜）は、寝る時間を過ぎている扱い
+// ゴミの日。曜日は 1=月 … 7=日
+const GARBAGE_DAYS = [1, 2, 5, 6];                  // 月・火・金・土
 
 // 列番号
 const C = { START: 1, LIMIT: 2, END: 3, MIN: 4, STATUS: 5, N1: 6, N2: 7, MSGID: 8, NOTE: 9, NAME: 10, UID: 11 };
@@ -161,6 +169,10 @@ function processMessages() {
     // 二重処理を防ぐため、先に既読位置を進める
     props.setProperty('LAST_MESSAGE_ID', m.id);
     if (m.author.bot || !(m.author.id in kids)) continue;
+    if (isGarbageReport(m.content)) {
+      props.setProperty('GARBAGE_REPORTED_DAY', dayKey(new Date(m.timestamp)));
+      continue;
+    }
     const cmd = parseCommand(m.content);
     if (!cmd) continue;
     try {
@@ -205,7 +217,9 @@ function handleStudy(m) {
   const t = new Date(m.timestamp);
   studySheet().appendRow([t, childName(m.author), "'" + uid, "'" + m.id]);
   react(m);
-  reply(m, `<@${uid}>の勉強おわりを受け付けたで（${fmtTime(t)}）\n・やるべき勉強は全部解いた？\n・答え合わせも全部おわった？\n・おわったものは提出した？`);
+  let msg = `<@${uid}>の勉強おわりを受け付けたで（${fmtTime(t)}）\n・やるべき勉強は全部解いた？\n・答え合わせも全部おわった？\n・おわったものは提出した？`;
+  if (needGarbageAsk(t)) msg += '\n・' + GARBAGE_ASK;
+  reply(m, msg);
 }
 
 // その子どもの、その日（0時区切り）の「勉強終了」があるか
@@ -258,8 +272,34 @@ function handleStart(m, hours) {
   let msg = `<@${uid}>のゲーム開始を受け付けたで（${fmtTime(t)}）。今回は${hours}時間、${fmtTime(addMin(t, hours * 60))}までやで`;
   msg += bedtimeNote(t, addMin(t, hours * 60));
   if (prevRow) msg += '\n前回は終了がなかったから「終了忘れ」で記録したで';
+  if (needGarbageAsk(t)) msg += '\n' + GARBAGE_ASK;
   react(m);
   reply(m, msg);
+}
+
+// ===== ゴミ捨ての確認 =====
+const GARBAGE_ASK = '今日はゴミ捨ての日やで。ゴミ捨ての報告はした？ まだなら「ゴミ捨て完了」と書いてな';
+
+// おこづかいボットが受け付ける「ゴミ捨て完了」「ゴミ捨て2完了」などの書き込みか
+// （ひらがな・カタカナ・漢字・全角数字・空白の違いは、おこづかいボットと同じように吸収する）
+function isGarbageReport(text) {
+  const kan = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10 };
+  const s = String(text || '')
+    .replace(/[\s\u3000]/g, '')
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60))
+    .split('捨').join('す')
+    .replace(/[一二三四五六七八九十]/g, c => String(kan[c]))
+    .replace(/かんりょう/g, '完了');
+  const m = s.match(/^ごみすて(\d+)?完了$/);
+  return !!m && (!m[1] || (Number(m[1]) >= 1 && Number(m[1]) <= 10)); // 個数の上限はおこづかいボットの MAX_COUNT と同じ
+}
+
+// ゴミの日で、その日まだ誰もゴミ捨てを報告していないか
+function needGarbageAsk(t) {
+  const dow = Number(Utilities.formatDate(t, 'Asia/Tokyo', 'u'));
+  if (!GARBAGE_DAYS.includes(dow)) return false;
+  return PropertiesService.getScriptProperties().getProperty('GARBAGE_REPORTED_DAY') !== dayKey(t);
 }
 
 // ===== 「開始」「終了」だけのとき：何のことか聞き返す（記録はしない） =====
