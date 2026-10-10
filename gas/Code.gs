@@ -12,7 +12,9 @@
  *
  * 勉強の確認:
  *   - 子どもが「勉強終了」と書くと、勉強おわりとして記録し、確認の投稿をする
- *   - その日（0時区切り）の「勉強終了」がないまま「ゲーム開始」が来たら、開始は受け付けたうえで親にメンションで知らせる
+ *   - 勉強がおわったものを机の上（親がわかる所）に置いたら「提出完了」と書く。流れは「勉強終了」→「提出完了」→「ゲーム開始」
+ *   - その日（0時区切り）の「勉強終了」「提出完了」のどちらかがないまま「ゲーム開始」が来たら、
+ *     開始は受け付けたうえで、出ていないものを親にメンションで知らせる
  *
  * ゴミ捨ての確認:
  *   - ゴミの日（GARBAGE_DAYS）に、その日まだ誰も「ゴミ捨て完了」を書いていなければ、
@@ -34,6 +36,7 @@
 // ===== 設定 =====
 const SHEET_NAME = '記録';
 const STUDY_SHEET_NAME = '勉強';
+const SUBMIT_SHEET_NAME = '提出';
 const SECOND_NOTICE_MIN = 10;       // 1回目の通知から2回目までの分数
 // 寝る時間（この時刻までにゲームを終える）。曜日は 1=月 … 7=日
 const BEDTIME_DEFAULT = '22:00';                    // 日〜木
@@ -55,7 +58,7 @@ const PROP_DEFAULTS = {
   RELAY_SECRET: '未設定',
   CHANNEL_ID: '未設定',
   CHILDREN: '未設定',
-  PARENTS: '未設定',   // 親のユーザーID（カンマ区切り）。勉強おわりなしで開始したときの通知先
+  PARENTS: '未設定',   // 親のユーザーID（カンマ区切り）。勉強終了・提出完了なしで開始したときの通知先
 };
 
 function setupProperties() {
@@ -177,6 +180,7 @@ function processMessages() {
     if (!cmd) continue;
     try {
       if (cmd.type === 'study') handleStudy(m);
+      else if (cmd.type === 'submit') handleSubmit(m);
       else if (cmd.type === 'start') handleStart(m, cmd.hours);
       else if (cmd.type === 'end') handleEnd(m);
       else if (cmd.type === 'ask') handleAsk(m, cmd.word);
@@ -198,12 +202,14 @@ function parseCommand(text) {
     .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
     .replace(/三/g, '3')
     .replace(/げーむ/g, 'ゲーム').replace(/べんきょう/g, '勉強')
-    .replace(/かいし/g, '開始').replace(/しゅうりょう/g, '終了').replace(/じかん/g, '時間');
+    .replace(/かいし/g, '開始').replace(/しゅうりょう/g, '終了').replace(/じかん/g, '時間')
+    .replace(/ていしゅつ/g, '提出').replace(/かんりょう/g, '完了');
 
   if (s === 'ゲーム開始') return { type: 'start', hours: 2 };
   if (s === 'ゲーム3時間開始') return { type: 'start', hours: 3 };
   if (s === 'ゲーム終了') return { type: 'end' };
   if (s === '勉強終了') return { type: 'study' };
+  if (s === '提出完了') return { type: 'submit' };
   if (s === '開始' || s === '3時間開始') return { type: 'ask', word: '開始' };
   if (s === '終了') return { type: 'ask', word: '終了' };
   if (s === '取消' || s === '取り消し' || s === '取消し') return { type: 'undo' };
@@ -217,14 +223,29 @@ function handleStudy(m) {
   const t = new Date(m.timestamp);
   studySheet().appendRow([t, childName(m.author), "'" + uid, "'" + m.id]);
   react(m);
-  let msg = `<@${uid}>の勉強おわりを受け付けたで（${fmtTime(t)}）\n・やるべき勉強は全部解いた？\n・答え合わせも全部おわった？\n・おわったものは提出した？`;
+  let msg = `<@${uid}>の勉強おわりを受け付けたで（${fmtTime(t)}）\n・やるべき勉強は全部解いた？\n・答え合わせも全部おわった？\n・おわったものを机の上（親がわかる所）に置いたら「提出完了」と書いてな`;
   if (needGarbageAsk(t)) msg += '\n・' + GARBAGE_ASK;
   reply(m, msg);
 }
 
+// ===== 提出 =====
+function handleSubmit(m) {
+  const uid = m.author.id;
+  const t = new Date(m.timestamp);
+  submitSheet().appendRow([t, childName(m.author), "'" + uid, "'" + m.id]);
+  react(m);
+  let msg = `<@${uid}>の提出を受け付けたで（${fmtTime(t)}）。おわったものは机の上（親がわかる所）に置いたな？`;
+  if (!hasStudyOn(uid, t)) msg += '\nただ、今日はまだ「勉強終了」が出てないで。勉強がおわってたら「勉強終了」も書いてな';
+  reply(m, msg);
+}
+
 // その子どもの、その日（0時区切り）の「勉強終了」があるか
-function hasStudyOn(uid, t) {
-  const sh = studySheet();
+function hasStudyOn(uid, t) { return hasRecordOn(studySheet(), uid, t); }
+
+// その子どもの、その日（0時区切り）の「提出完了」があるか
+function hasSubmitOn(uid, t) { return hasRecordOn(submitSheet(), uid, t); }
+
+function hasRecordOn(sh, uid, t) {
   const last = sh.getLastRow();
   if (last < 2) return false;
   const day = dayKey(t);
@@ -256,15 +277,19 @@ function handleStart(m, hours) {
     prevRow = active;
   }
 
-  // 今日の「勉強終了」がなければ、開始は受け付けたうえで親に知らせる
+  // 今日の「勉強終了」「提出完了」がそろっていなければ、開始は受け付けたうえで親に知らせる
   const studied = hasStudyOn(uid, t);
-  if (!studied) {
+  const submitted = hasSubmitOn(uid, t);
+  if (!studied || !submitted) {
     const parents = parentIds();
     const mention = parents.map(id => `<@${id}>`).join(' ');
-    replyPing(m, parents, `${mention ? mention + ' ' : ''}<@${uid}>は今日まだ「勉強終了」が出てないで。ちゃんと勉強した？`);
+    const missing = [studied ? '' : '「勉強終了」', submitted ? '' : '「提出完了」'].filter(x => x).join('と');
+    const ask = !studied ? 'ちゃんと勉強した？' : 'おわったものは机の上に置いてある？';
+    replyPing(m, parents, `${mention ? mention + ' ' : ''}<@${uid}>は今日まだ${missing}が出てないで。${ask}`);
   }
+  const note = [studied ? '' : '勉強おわりなし', submitted ? '' : '提出なし'].filter(x => x).join('・');
 
-  sh.appendRow([t, hours, '', '', ST.ACTIVE, '', '', "'" + m.id, studied ? '' : '勉強おわりなし', childName(m.author), "'" + uid]);
+  sh.appendRow([t, hours, '', '', ST.ACTIVE, '', '', "'" + m.id, note, childName(m.author), "'" + uid]);
   const row = sh.getLastRow();
   setLastAction(uid, { type: 'start', row: row, prevRow: prevRow });
   setLastUndo(uid, null);
@@ -469,11 +494,16 @@ function sheet() {
 }
 
 // 勉強おわりの記録シート（なければ作る）
-function studySheet() {
+function studySheet() { return recordSheet(STUDY_SHEET_NAME); }
+
+// 提出の記録シート（なければ作る）
+function submitSheet() { return recordSheet(SUBMIT_SHEET_NAME); }
+
+function recordSheet(name) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sh = ss.getSheetByName(STUDY_SHEET_NAME);
+  let sh = ss.getSheetByName(name);
   if (!sh) {
-    sh = ss.insertSheet(STUDY_SHEET_NAME);
+    sh = ss.insertSheet(name);
     sh.appendRow(['日時', '子ども', 'ユーザーID', 'メッセージID']);
     sh.setFrozenRows(1);
     sh.getRange(2, 3, sh.getMaxRows() - 1, 2).setNumberFormat('@');
