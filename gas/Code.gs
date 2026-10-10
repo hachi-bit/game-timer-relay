@@ -366,9 +366,9 @@ function handleEnd(m) {
   setLastAction(uid, { type: 'end', row: active });
   setLastUndo(uid, null);
 
-  const total = weeklyTotal(new Date(), uid);
+  const total = dailyTotal(start, uid);
   react(m);
-  reply(m, `<@${uid}>のゲーム終了を受け付けたで（${fmtTime(t)}）。今回は${fmtDur(min)}。今週の合計は${fmtDur(total)}`);
+  reply(m, `<@${uid}>のゲーム終了を受け付けたで（${fmtTime(t)}）。今回は${fmtDur(min)}。今日の合計は${fmtDur(total)}`);
 }
 
 // ===== 取消 =====
@@ -443,9 +443,9 @@ function handleRedo(m) {
     sh.getRange(la.row, C.END).setValue(new Date(undo.end));
     sh.getRange(la.row, C.MIN).setValue(undo.min);
     sh.getRange(la.row, C.STATUS).setValue(ST.DONE);
-    const total = weeklyTotal(new Date(), uid);
+    const total = dailyTotal(sh.getRange(la.row, C.START).getValue(), uid);
     react(m);
-    reply(m, `<@${uid}>の取消を取り消したで。${fmtTime(new Date(undo.end))}に終了した記録に戻したで（今回は${fmtDur(undo.min)}、今週の合計は${fmtDur(total)}）`);
+    reply(m, `<@${uid}>の取消を取り消したで。${fmtTime(new Date(undo.end))}に終了した記録に戻したで（今回は${fmtDur(undo.min)}、今日の合計は${fmtDur(total)}）`);
   }
   setLastAction(uid, la);
   setLastUndo(uid, null);
@@ -475,17 +475,16 @@ function checkNotice(now, active) {
 }
 
 // ===== 集計 =====
-function weeklyTotal(now, uid) {
-  const monday = new Date(now);
-  monday.setHours(0, 0, 0, 0);
-  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+// その子どもの、その日（0時区切り）の合計プレイ時間（分）。開始した日で数える（日をまたいだゲームは開始した日に入る）
+function dailyTotal(day, uid) {
+  const key = dayKey(day);
   const sh = sheet();
   const last = sh.getLastRow();
   if (last < 2) return 0;
   const rows = sh.getRange(2, 1, last - 1, C.UID).getValues();
   return rows
     .filter(r => String(r[C.UID - 1]) === uid &&
-                 r[C.START - 1] instanceof Date && r[C.START - 1] >= monday &&
+                 r[C.START - 1] instanceof Date && dayKey(r[C.START - 1]) === key &&
                  (r[C.STATUS - 1] === ST.DONE || r[C.STATUS - 1] === ST.FORGOT))
     .reduce((sum, r) => sum + (Number(r[C.MIN - 1]) || 0), 0);
 }

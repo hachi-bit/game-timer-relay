@@ -34,7 +34,7 @@
 ### 子ども複数人への対応
 
 - スクリプトプロパティ `CHILDREN` に登録した子ども（ユーザーID）の発言だけに反応する
-- 書き込んだ人のユーザーIDで子どもを見分け、**開始中・取消・取消の取消・通知・週の合計をすべて子どもごとに独立**させる
+- 書き込んだ人のユーザーIDで子どもを見分け、**開始中・取消・取消の取消・通知・今日の合計をすべて子どもごとに独立**させる
 - 2人同時に開始してもよい。取消できるのは自分の記録だけ
 - 返信ではメンション形式（`<@ID>`）で名前を出す（Discordが表示名に変換する。通知は飛ばさない）
 - 判定・集計はユーザーIDで行う。名前を変えても記録はずれない
@@ -105,7 +105,7 @@
 
 ### 終了
 
-- 返信例：「@たろうの終了を受け付けたで（13:25）。今回は1時間35分。今週の合計は8時間20分」
+- 返信例：「@たろうの終了を受け付けたで（13:25）。今回は1時間35分。今日の合計は2時間10分」
 - 開始していないのに終了が来たら：「@たろうの開始の記録がないで」
 
 ### 通知
@@ -120,7 +120,7 @@
 - 開始の取消：その記録を「取消」にする（プレイ時間に数えない）。その開始で前回を「終了忘れ」にしていた場合は、前回を「開始中」に戻す
 - 終了の取消：終了をなかったことにして「開始中」に戻す。制限時間・通知はそのまま続く
 - 取り消せるものがないとき：「取り消せるものがないで」
-- 終了を取り消したあとに「終了」と書くと、**最初の開始時刻から**その時点までで記録される（週の合計からもいったん外れ、再度の終了で足される）
+- 終了を取り消したあとに「終了」と書くと、**最初の開始時刻から**その時点までで記録される（今日の合計からもいったん外れ、再度の終了で足される）
 
 ### 取消の取消
 
@@ -136,9 +136,10 @@
 - あとから「終了」が来たら、その時点までの実際の時間で記録する
 - 終了がないまま次の「開始」が来たら、前回を「終了忘れ」として閉じ、**制限時間＋10分**を使ったことにする
 
-### 週の合計
+### 今日の合計
 
-- 月曜0時始まり、子どもごとに集計
+- 0時区切りで、子どもごとに集計（2026年10月に週の合計から変更）
+- 開始した日で数える（日をまたいだゲームは開始した日に入る）
 - 状態が「終了」「終了忘れ」の記録を合計する
 - 上限（残り時間・オーバー）の表示はしない（2026年10月に廃止）
 
@@ -248,7 +249,7 @@ J列の名前は、`CHILDREN` に固定の呼び名を書いていればそれ�
 
 1. 子どものアカウントで「開始」と書く → 1分以内に✅と返信が来る
 2. 「取消」と書く → 取消の返信が来て、シートの状態が「取消」になる
-3. 「開始」→「終了」で、プレイ時間と週の合計が返ってくる
+3. 「開始」→「終了」で、プレイ時間と今日の合計が返ってくる
 4. もう1人のアカウントでも「開始」と書き、1人目と別々に記録されることを確認する
 5. 通知の確認をしたいときは、シートの開始日時を2時間前に書き換えると1分以内に通知が来る
 
@@ -633,9 +634,9 @@ function handleEnd(m) {
   setLastAction(uid, { type: 'end', row: active });
   setLastUndo(uid, null);
 
-  const total = weeklyTotal(new Date(), uid);
+  const total = dailyTotal(start, uid);
   react(m);
-  reply(m, `<@${uid}>のゲーム終了を受け付けたで（${fmtTime(t)}）。今回は${fmtDur(min)}。今週の合計は${fmtDur(total)}`);
+  reply(m, `<@${uid}>のゲーム終了を受け付けたで（${fmtTime(t)}）。今回は${fmtDur(min)}。今日の合計は${fmtDur(total)}`);
 }
 
 // ===== 取消 =====
@@ -710,9 +711,9 @@ function handleRedo(m) {
     sh.getRange(la.row, C.END).setValue(new Date(undo.end));
     sh.getRange(la.row, C.MIN).setValue(undo.min);
     sh.getRange(la.row, C.STATUS).setValue(ST.DONE);
-    const total = weeklyTotal(new Date(), uid);
+    const total = dailyTotal(sh.getRange(la.row, C.START).getValue(), uid);
     react(m);
-    reply(m, `<@${uid}>の取消を取り消したで。${fmtTime(new Date(undo.end))}に終了した記録に戻したで（今回は${fmtDur(undo.min)}、今週の合計は${fmtDur(total)}）`);
+    reply(m, `<@${uid}>の取消を取り消したで。${fmtTime(new Date(undo.end))}に終了した記録に戻したで（今回は${fmtDur(undo.min)}、今日の合計は${fmtDur(total)}）`);
   }
   setLastAction(uid, la);
   setLastUndo(uid, null);
@@ -742,17 +743,16 @@ function checkNotice(now, active) {
 }
 
 // ===== 集計 =====
-function weeklyTotal(now, uid) {
-  const monday = new Date(now);
-  monday.setHours(0, 0, 0, 0);
-  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+// その子どもの、その日（0時区切り）の合計プレイ時間（分）。開始した日で数える（日をまたいだゲームは開始した日に入る）
+function dailyTotal(day, uid) {
+  const key = dayKey(day);
   const sh = sheet();
   const last = sh.getLastRow();
   if (last < 2) return 0;
   const rows = sh.getRange(2, 1, last - 1, C.UID).getValues();
   return rows
     .filter(r => String(r[C.UID - 1]) === uid &&
-                 r[C.START - 1] instanceof Date && r[C.START - 1] >= monday &&
+                 r[C.START - 1] instanceof Date && dayKey(r[C.START - 1]) === key &&
                  (r[C.STATUS - 1] === ST.DONE || r[C.STATUS - 1] === ST.FORGOT))
     .reduce((sum, r) => sum + (Number(r[C.MIN - 1]) || 0), 0);
 }
