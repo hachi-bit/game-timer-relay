@@ -14,7 +14,7 @@
  *   - 子どもが「勉強終了」と書くと、勉強おわりとして記録し、確認の投稿をする
  *   - 勉強がおわったものを机の上（親がわかる所）に置いたら「提出完了」と書く。流れは「勉強終了」→「提出完了」→「ゲーム開始」
  *   - その日（0時区切り）の「勉強終了」「提出完了」のどちらかがないまま「ゲーム開始」が来たら、
- *     開始は受け付けたうえで、出ていないものを親にメンションで知らせる
+ *     開始は受け付けたうえで、出ていないものを子ども本人にメンションで知らせる
  *
  * ゴミ捨ての確認:
  *   - ゴミの日（GARBAGE_DAYS）に、その日まだ誰も「ゴミ捨て完了」を書いていなければ、
@@ -58,7 +58,7 @@ const PROP_DEFAULTS = {
   RELAY_SECRET: '未設定',
   CHANNEL_ID: '未設定',
   CHILDREN: '未設定',
-  PARENTS: '未設定',   // 親のユーザーID（カンマ区切り）。勉強終了・提出完了なしで開始したときの通知先
+  PARENTS: '未設定',   // 親のユーザーID（カンマ区切り）。今は通知に使っていない（勉強終了・提出完了なしの開始は子ども本人に知らせる）
 };
 
 function setupProperties() {
@@ -277,15 +277,17 @@ function handleStart(m, hours) {
     prevRow = active;
   }
 
-  // 今日の「勉強終了」「提出完了」がそろっていなければ、開始は受け付けたうえで親に知らせる
+  // 今日の「勉強終了」「提出完了」がそろっていなければ、開始は受け付けたうえで子ども本人にメンションで知らせる
+  // （親は家にいないことが多いので、本人に気づかせて「忘れてた」で済ませないようにする）
   const studied = hasStudyOn(uid, t);
   const submitted = hasSubmitOn(uid, t);
   if (!studied || !submitted) {
-    const parents = parentIds();
-    const mention = parents.map(id => `<@${id}>`).join(' ');
     const missing = [studied ? '' : '「勉強終了」', submitted ? '' : '「提出完了」'].filter(x => x).join('と');
-    const ask = !studied ? 'ちゃんと勉強した？' : 'おわったものは机の上に置いてある？';
-    replyPing(m, parents, `${mention ? mention + ' ' : ''}<@${uid}>は今日まだ${missing}が出てないで。${ask}`);
+    const todo = [
+      studied ? '' : '勉強がおわったら「勉強終了」',
+      submitted ? '' : 'おわったものを机の上（親がわかる所）に置いたら「提出完了」',
+    ].filter(x => x).join('、') + 'と書いてな';
+    replyPing(m, [uid], `<@${uid}> 今日はまだ${missing}が出てないで！ ${todo}`);
   }
   const note = [studied ? '' : '勉強おわりなし', submitted ? '' : '提出なし'].filter(x => x).join('・');
 
