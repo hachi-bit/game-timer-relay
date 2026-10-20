@@ -359,16 +359,24 @@ function handleEnd(m) {
   }
   const t = new Date(m.timestamp);
   const start = sh.getRange(active, C.START).getValue();
-  const min = Math.max(0, Math.round((t - start) / 60000));
-  sh.getRange(active, C.END).setValue(t);
+  // 日付が変わってから「ゲーム終了」が来たら、書き忘れとみなして開始した日の翌0時で打ち切り、「終了忘れ」で記録する
+  const forgot = dayKey(t) !== dayKey(start);
+  const end = forgot ? nextMidnight(start) : t;
+  const min = Math.max(0, Math.round((end - start) / 60000));
+  sh.getRange(active, C.END).setValue(end);
   sh.getRange(active, C.MIN).setValue(min);
-  sh.getRange(active, C.STATUS).setValue(ST.DONE);
+  sh.getRange(active, C.STATUS).setValue(forgot ? ST.FORGOT : ST.DONE);
   setLastAction(uid, { type: 'end', row: active });
   setLastUndo(uid, null);
 
   const total = dailyTotal(start, uid);
   react(m);
-  reply(m, `<@${uid}>のゲーム終了を受け付けたで（${fmtTime(t)}）。今回は${fmtDur(min)}。今日の合計は${fmtDur(total)}`);
+  if (forgot) {
+    reply(m, `<@${uid}>のゲーム終了を受け付けたで。ただ、日付が変わってたから「終了忘れ」として0:00で打ち切ったで（${fmtTime(start)}開始、記録は${fmtDur(min)}）。` +
+      `その日の合計は${fmtDur(total)}\n次からは、ゲームをやめたらすぐ「ゲーム終了」と書いてな`);
+  } else {
+    reply(m, `<@${uid}>のゲーム終了を受け付けたで（${fmtTime(t)}）。今回は${fmtDur(min)}。今日の合計は${fmtDur(total)}`);
+  }
 }
 
 // ===== 取消 =====
@@ -403,6 +411,7 @@ function handleUndo(m) {
   } else if (la.type === 'end') {
     undo.end = sh.getRange(la.row, C.END).getValue().getTime();
     undo.min = sh.getRange(la.row, C.MIN).getValue();
+    undo.status = sh.getRange(la.row, C.STATUS).getValue();
     sh.getRange(la.row, C.END).clearContent();
     sh.getRange(la.row, C.MIN).clearContent();
     sh.getRange(la.row, C.STATUS).setValue(ST.ACTIVE);
@@ -442,7 +451,7 @@ function handleRedo(m) {
   } else if (la.type === 'end') {
     sh.getRange(la.row, C.END).setValue(new Date(undo.end));
     sh.getRange(la.row, C.MIN).setValue(undo.min);
-    sh.getRange(la.row, C.STATUS).setValue(ST.DONE);
+    sh.getRange(la.row, C.STATUS).setValue(undo.status || ST.DONE);
     const total = dailyTotal(sh.getRange(la.row, C.START).getValue(), uid);
     react(m);
     reply(m, `<@${uid}>の取消を取り消したで。${fmtTime(new Date(undo.end))}に終了した記録に戻したで（今回は${fmtDur(undo.min)}、今日の合計は${fmtDur(total)}）`);
@@ -648,6 +657,11 @@ function react(m) {
 // ===== 表示用 =====
 function dayKey(d) {
   return Utilities.formatDate(d, 'Asia/Tokyo', 'yyyyMMdd');
+}
+
+// その日（0時区切り）の翌日の0:00
+function nextMidnight(d) {
+  return new Date(`${Utilities.formatDate(new Date(d.getTime() + 86400000), 'Asia/Tokyo', 'yyyy-MM-dd')}T00:00:00+09:00`);
 }
 
 function addMin(d, min) {
