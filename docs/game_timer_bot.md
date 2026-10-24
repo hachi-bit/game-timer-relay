@@ -95,6 +95,16 @@
 - すでに開始中なら：「もう開始中やで（11:50から、13:50まで）」
 - 前回の終了がないまま、前回の2回目の通知時刻（制限時間＋10分）を過ぎていたら、前回を「終了忘れ」として閉じて新しく開始する
 
+### 確認をしない子ども（NO_STUDY_CHECK）
+
+- スクリプトプロパティ `NO_STUDY_CHECK` に、`CHILDREN` の呼び名かユーザーIDを書くと（例：`さち`）、その子には次を出さない（2026年10月に追加）
+  - ゲーム開始のときの「今日はまだ『勉強終了』『提出完了』が出てないで！」（記録の備考も空のまま）
+  - 「提出完了」の返信の「今日はまだ『勉強終了』が出てないで」
+  - 勉強終了・ゲーム開始の返信のゴミの日の一言
+- ゲームの制限時間・通知・寝る時間の一言・今日の合計は、ほかの子と同じ
+- 呼び名で書くときは、`CHILDREN` に `ID:さち` の形で呼び名が入っている必要がある。入っていなければユーザーIDを書く
+- その子が `ゴミ捨て完了` を書いた日も、ほかの子にはゴミの日の一言を出さない（誰かが書けばその日は終わり）
+
 ### ゴミ捨ての確認
 
 - ゴミの日（月・火・金・土）に、その日まだ誰も `ゴミ捨て完了` を書いていなければ、`勉強終了` と `ゲーム開始`（`ゲーム3時間開始` も）の返信の最後に「今日はゴミ捨ての日やで。ゴミ捨ての報告はした？ まだなら「ゴミ捨て完了」と書いてな」を付ける
@@ -292,6 +302,10 @@ J列の名前は、`CHILDREN` に固定の呼び名を書いていればそれ�
  *     「勉強終了」「ゲーム開始」の返信の最後にゴミ捨ての報告をしたか聞く一言を付ける
  *   - 「ゴミ捨て完了」はおこづかいボットの書き込みだが、同じチャンネルなのでこのボットも見て日付を覚えておく
  *     （子どものどちらかが書けば、その日は2人とも聞かない）
+ *
+ * 確認をしない子ども（任意）:
+ *   スクリプトプロパティ NO_STUDY_CHECK に、CHILDREN の呼び名かユーザーIDを書く（例：さち）
+ *   その子には「勉強終了」「提出完了」が抜けたときの知らせと、ゴミの日の一言を出さない
  *
  * 1人用から移行するとき:
  *   1. setupProperties() を実行（CHILDREN の枠ができ、今の CHILD_USER_ID が自動でコピーされる）
@@ -495,7 +509,7 @@ function handleStudy(m) {
   studySheet().appendRow([t, childName(m.author), "'" + uid, "'" + m.id]);
   react(m);
   let msg = `<@${uid}>の勉強おわりを受け付けたで（${fmtTime(t)}）\n・やるべき勉強は全部解いた？\n・答え合わせも全部おわった？\n・おわったものを机の上（親がわかる所）に置いたら「提出完了」と書いてな`;
-  if (needGarbageAsk(t)) msg += '\n・' + GARBAGE_ASK;
+  if (needGarbageAsk(t, uid)) msg += '\n・' + GARBAGE_ASK;
   reply(m, msg);
 }
 
@@ -506,7 +520,7 @@ function handleSubmit(m) {
   submitSheet().appendRow([t, childName(m.author), "'" + uid, "'" + m.id]);
   react(m);
   let msg = `<@${uid}>の提出を受け付けたで（${fmtTime(t)}）。おわったものは机の上（親がわかる所）に置いたな？`;
-  if (!hasStudyOn(uid, t)) msg += '\nただ、今日はまだ「勉強終了」が出てないで。勉強がおわってたら「勉強終了」も書いてな';
+  if (!isNoStudyCheck(uid) && !hasStudyOn(uid, t)) msg += '\nただ、今日はまだ「勉強終了」が出てないで。勉強がおわってたら「勉強終了」も書いてな';
   reply(m, msg);
 }
 
@@ -552,7 +566,7 @@ function handleStart(m, hours) {
   // （親は家にいないことが多いので、本人に気づかせて「忘れてた」で済ませないようにする）
   const studied = hasStudyOn(uid, t);
   const submitted = hasSubmitOn(uid, t);
-  if (!studied || !submitted) {
+  if (!isNoStudyCheck(uid) && (!studied || !submitted)) {
     const missing = [studied ? '' : '「勉強終了」', submitted ? '' : '「提出完了」'].filter(x => x).join('と');
     const todo = [
       studied ? '' : '勉強がおわったら「勉強終了」',
@@ -560,7 +574,7 @@ function handleStart(m, hours) {
     ].filter(x => x).join('、') + 'と書いてな';
     replyPing(m, [uid], `<@${uid}> 今日はまだ${missing}が出てないで！ ${todo}`);
   }
-  const note = [studied ? '' : '勉強おわりなし', submitted ? '' : '提出なし'].filter(x => x).join('・');
+  const note = isNoStudyCheck(uid) ? '' : [studied ? '' : '勉強おわりなし', submitted ? '' : '提出なし'].filter(x => x).join('・');
 
   sh.appendRow([t, hours, '', '', ST.ACTIVE, '', '', "'" + m.id, note, childName(m.author), "'" + uid]);
   const row = sh.getLastRow();
@@ -570,7 +584,7 @@ function handleStart(m, hours) {
   let msg = `<@${uid}>のゲーム開始を受け付けたで（${fmtTime(t)}）。今回は${hours}時間、${fmtTime(addMin(t, hours * 60))}までやで`;
   msg += bedtimeNote(t, addMin(t, hours * 60));
   if (prevRow) msg += '\n前回は終了がなかったから「終了忘れ」で記録したで';
-  if (needGarbageAsk(t)) msg += '\n' + GARBAGE_ASK;
+  if (needGarbageAsk(t, uid)) msg += '\n' + GARBAGE_ASK;
   react(m);
   reply(m, msg);
 }
@@ -593,8 +607,9 @@ function isGarbageReport(text) {
   return !!m && (!m[1] || (Number(m[1]) >= 1 && Number(m[1]) <= 10)); // 個数の上限はおこづかいボットの MAX_COUNT と同じ
 }
 
-// ゴミの日で、その日まだ誰もゴミ捨てを報告していないか
-function needGarbageAsk(t) {
+// ゴミの日で、その日まだ誰もゴミ捨てを報告していないか（NO_STUDY_CHECK の子どもには聞かない）
+function needGarbageAsk(t, uid) {
+  if (isNoStudyCheck(uid)) return false;
   const dow = Number(Utilities.formatDate(t, 'Asia/Tokyo', 'u'));
   if (!GARBAGE_DAYS.includes(dow)) return false;
   return PropertiesService.getScriptProperties().getProperty('GARBAGE_REPORTED_DAY') !== dayKey(t);
@@ -845,6 +860,15 @@ function children() {
   });
   if (!Object.keys(map).length) throw new Error('CHILDREN にユーザーIDが入っていないで');
   return map;
+}
+
+// 勉強・提出・ゴミ捨ての確認をしない子どもか
+// スクリプトプロパティ NO_STUDY_CHECK に、CHILDREN の呼び名かユーザーIDをカンマ区切りで書く（例：さち）。なければ全員確認する
+function isNoStudyCheck(uid) {
+  const v = PropertiesService.getScriptProperties().getProperty('NO_STUDY_CHECK');
+  if (!v || v === '未設定') return false;
+  const name = children()[uid] || '';
+  return v.split(/[,、，]/).map(x => x.trim()).filter(x => x).some(x => x === uid || (name && x === name));
 }
 
 // 親のユーザーID（PARENTS が未設定なら空。その場合はメンションなしで知らせる）

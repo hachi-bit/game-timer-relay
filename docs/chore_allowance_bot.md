@@ -30,6 +30,7 @@
 | 布団しき | 10円 | `布団しき完了` |
 | 布団たたみ | 10円 | `布団たたみ完了` |
 | 水やり | 15円 | `水やり完了` |
+| リストにないお手伝い | 書いた金額（1回300円まで） | `買い物のお手伝い50円完了`（「お手伝い」の前は自由。`お手伝い50円完了` だけでもOK） |
 
 - 空白を除いて、メッセージ全体がこの形と一致したときだけ受け付ける
 - ひらがな・カタカナ・漢字（`ごみすて完了` `布団敷き完了` `水遣り完了`）、全角数字・漢数字の違いは受け付ける
@@ -38,6 +39,13 @@
 - 個数は1〜10まで（打ち間違い防止）
 - ボットが返事しなかったら書き方がおかしい合図
 - 金額や言葉はコード先頭の `CHORES` で変えられる
+
+**金額つきお手伝い**（2026年10月に追加）
+- 形は「（何をしたか）（の）お手伝い ＋ 金額 ＋ 円完了」。何をしたかは20文字まで、なくてもOK。`おてつだい` `えん` `かんりょう`、全角数字も受け付ける
+- 金額は1〜300円（`FREE_MAX_YEN` で変えられる）。超えたときは「1回300円までやで。金額を直して書き直してな」と返す
+- 返信例：「@たろうの買い物のお手伝い（50円）を受け付けたで／親が✅で承認、❌で却下やで」
+- 親が✅なら書いた金額のまま承認。金額を変えたいときは❌で却下して、子どもに書き直してもらう（親が金額を直す仕組みはない）
+- シートには、お手伝いの列に「買い物のお手伝い」、金額の列に報告の金額、備考に「金額指定」が入る
 
 ### 受付
 
@@ -169,6 +177,7 @@ GASが自分で使うプロパティ：`LAST_MESSAGE_ID`（どこまで読んだ
 ### 3-5. 子どもへのルール説明
 
 - お手伝いをしたら一般チャンネルに「ゴミ捨て2完了」「水やり完了」のように書く
+- リストにないお手伝いは「買い物のお手伝い50円完了」のように金額をつけて書く（1回300円まで）
 - ボットから「受け付けたで」が来たらOK。来なかったら書き方が違う
 - 親が✅を押したらおこづかい確定
 
@@ -183,6 +192,7 @@ GASが自分で使うプロパティ：`LAST_MESSAGE_ID`（どこまで読んだ
  *
  * しくみ:
  *   1. 子どもがチャンネルに「ゴミ捨て2完了」「水やり完了」などと書く
+ *      リストにないお手伝いは「買い物のお手伝い50円完了」のように金額つきで書く（「お手伝い」の前は自由。なくてもOK）
  *   2. ボットが「受け付けたで」と返信し、その返信に自分で✅と❌を付ける
  *   3. 親が✅を押したら承認（金額が確定）、❌なら却下
  *   4. 毎朝8時30分に、前日までの未承認・保留（✅❌両方）の報告をリストにして親に知らせる
@@ -201,6 +211,8 @@ GASが自分で使うプロパティ：`LAST_MESSAGE_ID`（どこまで読んだ
 // ===== 設定 =====
 const SHEET_NAME = '記録';
 const MAX_COUNT = 10;               // 1回の報告で受け付ける最大の個数
+const FREE_MAX_YEN = 300;           // 金額つきお手伝い（「お手伝い50円完了」）の1回あたりの上限
+const FREE_NOTE = '金額指定';         // 金額つきお手伝いの行の備考（金額は報告の時点で金額の列に入れておく）
 const REPORT_HOUR = 8;              // 月まとめを通知する時（毎月1日）
 const DIGEST_TIME = '08:30';        // 未承認・保留のまとめを知らせる時刻（毎日）
 const DIGEST_PER_POST = 12;         // まとめ1投稿あたりの件数（Discordの文字数上限対策）
@@ -308,10 +320,12 @@ function processMessages() {
   for (const m of msgs) {
     props.setProperty('LAST_MESSAGE_ID', m.id);
     if (m.author.bot || !(m.author.id in kids)) continue;
-    const cmd = parseReport(m.content);
-    if (!cmd) continue; // 書き方が違うときは無反応
+    const free = parseFreeReport(m.content);
+    const cmd = free ? null : parseReport(m.content);
+    if (!free && !cmd) continue; // 書き方が違うときは無反応
     try {
-      if (cmd.ask) reply(m, `<@${m.author.id}> なにが完了？ 「ゴミ捨て完了」みたいに書いてな`);
+      if (free) handleFreeReport(m, free);
+      else if (cmd.ask) reply(m, `<@${m.author.id}> なにが完了？ 「ゴミ捨て完了」みたいに書いてな`);
       else handleReport(m, cmd);
     } catch (e) {
       console.error(`処理エラー (${m.id}): ${e}`);
@@ -345,6 +359,45 @@ function parseReport(text) {
   const count = m[2] ? Number(m[2]) : 1;
   if (count < 1 || count > MAX_COUNT) return null;
   return { chore: chore, count: count };
+}
+
+// 金額つきお手伝い：「（何をしたか）のお手伝い50円完了」。「お手伝い」の前は自由（なくてもOK、20文字まで）
+// 何をしたかの部分はそのまま記録するので、ひらがな・カタカナの変換はしない
+function parseFreeReport(text) {
+  const s = String(text || '')
+    .replace(/[\s\u3000]/g, '')
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/(おてつだい|オテツダイ|お手つだい)/g, 'お手伝い')
+    .replace(/(かんりょう|カンリョウ)/g, '完了')
+    .replace(/えん完了$/, '円完了');
+  const m = s.match(/^(.{0,21}?)お手伝い(\d+)円完了$/);
+  if (!m) return null;
+  const what = m[1].replace(/の$/, '');
+  if (what.length > 20) return null;
+  return { what: what, yen: Number(m[2]) };
+}
+
+function handleFreeReport(m, cmd) {
+  const uid = m.author.id;
+  if (cmd.yen < 1 || cmd.yen > FREE_MAX_YEN) {
+    reply(m, `<@${uid}> 金額つきのお手伝いは1回${FREE_MAX_YEN}円までやで。金額を直して書き直してな`);
+    return;
+  }
+  const name = freeChoreName(cmd.what);
+  const at = new Date(m.timestamp);
+  const bot = reply(m, `<@${uid}>の${name}（${cmd.yen}円）を受け付けたで\n親が${OK}で承認、${NG}で却下やで`);
+  sheet().appendRow([at, childName(m.author), "'" + uid, name, 1, cmd.yen, ST.WAIT, "'" + m.id, "'" + bot.id, '', '', FREE_NOTE]);
+  react(bot.id, OK);
+  react(bot.id, NG);
+}
+
+function freeChoreName(what) { return what ? `${what}のお手伝い` : 'お手伝い'; }
+
+// 行の表示名（金額つきお手伝いは金額も付ける、個数が2以上なら ×個数 を付ける）
+function rowLabel(v) {
+  if (v[C.NOTE - 1] === FREE_NOTE) return `${v[C.CHORE - 1]}（${Number(v[C.YEN - 1])}円）`;
+  const count = Number(v[C.COUNT - 1]);
+  return count > 1 ? `${v[C.CHORE - 1]}×${count}` : v[C.CHORE - 1];
 }
 
 function handleReport(m, cmd) {
@@ -403,18 +456,23 @@ function approve(row, parentId) {
   const v = sh.getRange(row, 1, 1, HEADER.length).getValues()[0];
   const uid = String(v[C.UID - 1]);
   const at = v[C.AT - 1];
-  const chore = CHORES.find(c => c.name === v[C.CHORE - 1]);
-  const count = Number(v[C.COUNT - 1]);
-  // 金額はその日に承認済みの個数のあとに数える（却下された分は数えない）
-  const before = countOfDay(uid, chore.name, at, [ST.OK]);
-  const yen = amount(chore, before + count) - amount(chore, before);
+  const label = rowLabel(v);
+  let yen;
+  if (v[C.NOTE - 1] === FREE_NOTE) {
+    yen = Number(v[C.YEN - 1]); // 金額つきお手伝いは、報告に書いた金額のまま
+  } else {
+    const chore = CHORES.find(c => c.name === v[C.CHORE - 1]);
+    const count = Number(v[C.COUNT - 1]);
+    // 金額はその日に承認済みの個数のあとに数える（却下された分は数えない）
+    const before = countOfDay(uid, chore.name, at, [ST.OK]);
+    yen = amount(chore, before + count) - amount(chore, before);
+  }
   const now = new Date();
   sh.getRange(row, C.YEN).setValue(yen);
   sh.getRange(row, C.STATUS).setValue(ST.OK);
   sh.getRange(row, C.DONEAT).setValue(now);
   sh.getRange(row, C.BY).setValue("'" + parentId);
 
-  const label = count > 1 ? `${chore.name}×${count}` : chore.name;
   const ym = ymKey(at);
   const total = monthTotal(uid, ym);
   const late = ym !== ymKey(now);
@@ -425,12 +483,11 @@ function approve(row, parentId) {
 function reject(row, parentId) {
   const sh = sheet();
   const v = sh.getRange(row, 1, 1, HEADER.length).getValues()[0];
+  const label = rowLabel(v);
   sh.getRange(row, C.YEN).setValue(0);
   sh.getRange(row, C.STATUS).setValue(ST.NG);
   sh.getRange(row, C.DONEAT).setValue(new Date());
   sh.getRange(row, C.BY).setValue("'" + parentId);
-  const count = Number(v[C.COUNT - 1]);
-  const label = count > 1 ? `${v[C.CHORE - 1]}×${count}` : v[C.CHORE - 1];
   replyTo(String(v[C.BOTID - 1]), `<@${String(v[C.UID - 1])}>の${label}は却下されたで`);
 }
 
@@ -458,8 +515,7 @@ function dailyDigest(now) {
     const botId = String(v[C.BOTID - 1]);
     let st = null;
     try { st = reactionState(botId, parents); } catch (e) { console.error(`まとめの確認エラー (行${row}): ${e}`); }
-    const count = Number(v[C.COUNT - 1]);
-    const label = count > 1 ? `${v[C.CHORE - 1]}×${count}` : v[C.CHORE - 1];
+    const label = rowLabel(v);
     const link = msgLink(botId);
     const line = `・${Utilities.formatDate(v[C.AT - 1], 'Asia/Tokyo', 'M/d HH:mm')} <@${String(v[C.UID - 1])}> ${label}` + (link ? `　[→投稿へ](${link})` : '');
     (st && st.okBy && st.ngBy ? held : waiting).push(line);
