@@ -24,6 +24,7 @@
  *
  * 確認をしない子ども（任意）:
  *   スクリプトプロパティ NO_STUDY_CHECK に、CHILDREN の呼び名かユーザーIDを書く（例：さち）
+ *   setupProperties() を実行すると、まだなければ「さち」で作られる。誰に当たったかはログに出る
  *   その子には「勉強終了」「提出完了」が抜けたときの知らせと、ゴミの日の一言を出さない
  *
  * 1人用から移行するとき:
@@ -63,6 +64,7 @@ const PROP_DEFAULTS = {
   CHANNEL_ID: '未設定',
   CHILDREN: '未設定',
   PARENTS: '未設定',   // 親のユーザーID（カンマ区切り）。今は通知に使っていない（勉強終了・提出完了なしの開始は子ども本人に知らせる）
+  NO_STUDY_CHECK: 'さち', // 勉強・提出・ゴミ捨ての確認をしない子ども（CHILDREN の呼び名かユーザーID、カンマ区切り）
 };
 
 function setupProperties() {
@@ -87,6 +89,19 @@ function checkProperties() {
     Logger.log('「未設定」のままの項目：' + missing.join(', ') + '\nプロジェクトの設定 → スクリプト プロパティで値を入れてな');
   } else {
     Logger.log('プロパティは全部入ってるで');
+  }
+  // 確認をしない子どもが、CHILDREN の誰に当たっているか
+  const v = p.getProperty('NO_STUDY_CHECK');
+  if (v && v !== '未設定' && !missing.includes('CHILDREN')) {
+    try {
+      const kids = children();
+      const hit = Object.keys(kids).filter(id => isNoStudyCheck(id)).map(id => `${kids[id] || '(呼び名なし)'} ${id}`);
+      Logger.log(hit.length
+        ? '勉強・提出・ゴミ捨ての確認をしない子ども：' + hit.join(', ')
+        : `NO_STUDY_CHECK（${v}）が CHILDREN の誰にも当たってないで。CHILDREN を「ID:さち」の形にするか、NO_STUDY_CHECK にIDを入れてな`);
+    } catch (e) {
+      Logger.log(String(e));
+    }
   }
 }
 

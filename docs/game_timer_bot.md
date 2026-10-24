@@ -103,6 +103,7 @@
   - 勉強終了・ゲーム開始の返信のゴミの日の一言
 - ゲームの制限時間・通知・寝る時間の一言・今日の合計は、ほかの子と同じ
 - 呼び名で書くときは、`CHILDREN` に `ID:さち` の形で呼び名が入っている必要がある。入っていなければユーザーIDを書く
+- `setupProperties()` を実行すると、まだなければ `NO_STUDY_CHECK` が `さち` で作られる。実行ログに「勉強・提出・ゴミ捨ての確認をしない子ども：さち（ID）」と出れば当たっている。「誰にも当たってないで」と出たら、`CHILDREN` に呼び名がない
 - その子が `ゴミ捨て完了` を書いた日も、ほかの子にはゴミの日の一言を出さない（誰かが書けばその日は終わり）
 
 ### ゴミ捨ての確認
@@ -305,6 +306,7 @@ J列の名前は、`CHILDREN` に固定の呼び名を書いていればそれ�
  *
  * 確認をしない子ども（任意）:
  *   スクリプトプロパティ NO_STUDY_CHECK に、CHILDREN の呼び名かユーザーIDを書く（例：さち）
+ *   setupProperties() を実行すると、まだなければ「さち」で作られる。誰に当たったかはログに出る
  *   その子には「勉強終了」「提出完了」が抜けたときの知らせと、ゴミの日の一言を出さない
  *
  * 1人用から移行するとき:
@@ -344,6 +346,7 @@ const PROP_DEFAULTS = {
   CHANNEL_ID: '未設定',
   CHILDREN: '未設定',
   PARENTS: '未設定',   // 親のユーザーID（カンマ区切り）。今は通知に使っていない（勉強終了・提出完了なしの開始は子ども本人に知らせる）
+  NO_STUDY_CHECK: 'さち', // 勉強・提出・ゴミ捨ての確認をしない子ども（CHILDREN の呼び名かユーザーID、カンマ区切り）
 };
 
 function setupProperties() {
@@ -368,6 +371,19 @@ function checkProperties() {
     Logger.log('「未設定」のままの項目：' + missing.join(', ') + '\nプロジェクトの設定 → スクリプト プロパティで値を入れてな');
   } else {
     Logger.log('プロパティは全部入ってるで');
+  }
+  // 確認をしない子どもが、CHILDREN の誰に当たっているか
+  const v = p.getProperty('NO_STUDY_CHECK');
+  if (v && v !== '未設定' && !missing.includes('CHILDREN')) {
+    try {
+      const kids = children();
+      const hit = Object.keys(kids).filter(id => isNoStudyCheck(id)).map(id => `${kids[id] || '(呼び名なし)'} ${id}`);
+      Logger.log(hit.length
+        ? '勉強・提出・ゴミ捨ての確認をしない子ども：' + hit.join(', ')
+        : `NO_STUDY_CHECK（${v}）が CHILDREN の誰にも当たってないで。CHILDREN を「ID:さち」の形にするか、NO_STUDY_CHECK にIDを入れてな`);
+    } catch (e) {
+      Logger.log(String(e));
+    }
   }
 }
 
