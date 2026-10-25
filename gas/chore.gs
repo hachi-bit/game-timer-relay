@@ -4,8 +4,8 @@
  *
  * しくみ:
  *   1. 子どもがチャンネルに「ゴミ捨て2完了」「水やり完了」などと書く
- *      リストにないお手伝いは「買い物のお手伝い50円」のように金額つきで書く（「お手伝い」の前は自由。なくてもOK。最後の「完了」はあってもなくてもOK）
- *   2. ボットが「受け付けたで」と返信し、その返信に自分で✅と❌を付ける
+ *      リストにないお手伝いは「お手伝い50円 買い物」のように金額と名目をつけて書く（「買い物のお手伝い50円」もOK。名目は必須。最後の「完了」はあってもなくてもOK）
+ *   2. ボットが子どもの投稿を引用して「承認しますか？」と返信し、その返信に自分で✅と❌を付ける
  *   3. 親が✅を押したら承認（金額が確定）、❌なら却下
  *   4. 毎朝8時30分に、前日までの未承認・保留（✅❌両方）の報告をリストにして親に知らせる
  *   5. 毎月1日の朝に、前月の承認済み合計を子どもごとに通知する
@@ -173,35 +173,49 @@ function parseReport(text) {
   return { chore: chore, count: count };
 }
 
-// 金額つきお手伝い：「（何をしたか）のお手伝い50円」。最後の「完了」はあってもなくてもOK（これだけ「最後が完了」のルールの例外）
-// 「お手伝い」の前は自由（なくてもOK、20文字まで）
-// 何をしたかの部分はそのまま記録するので、ひらがな・カタカナの変換はしない
+// 金額つきお手伝い：「お手伝い50円 買い物」（円のあとに名目）か「買い物のお手伝い50円」（お手伝いの前に名目）
+// 名目は必須（どちらか一方、20文字まで）。最後の「完了」はあってもなくてもOK（これだけ「最後が完了」のルールの例外）
+// 名目はそのまま記録するので、ひらがな・カタカナの変換はしない
 function parseFreeReport(text) {
   const s = String(text || '')
     .replace(/[\s\u3000]/g, '')
     .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
     .replace(/(おてつだい|オテツダイ|お手つだい)/g, 'お手伝い')
     .replace(/(かんりょう|カンリョウ)/g, '完了')
-    .replace(/えん(完了)?$/, '円$1');
-  const m = s.match(/^(.{0,21}?)お手伝い(\d+)円(完了)?$/);
+    .replace(/(\d)えん/g, '$1円');
+  const m = s.match(/^(.{0,21}?)お手伝い(\d+)円(.{0,30})$/);
   if (!m) return null;
-  const what = m[1].replace(/の$/, '');
-  if (what.length > 20) return null;
+  const before = m[1].replace(/の$/, '');
+  // 円のあと：「完了」と、名目を囲むカッコ・区切りを外す
+  const after = m[3].replace(/^完了/, '').replace(/完了$/, '')
+    .replace(/^[（(「【\[:：・、,，\-ー]+/, '').replace(/[）)」】\]]+$/, '');
+  if (before.length > 20 || after.length > 20) return null;
+  const what = [before, after].filter(x => x).join('・');
   return { what: what, yen: Number(m[2]) };
 }
 
 function handleFreeReport(m, cmd) {
   const uid = m.author.id;
+  if (!cmd.what) {
+    reply(m, `<@${uid}> 何のお手伝い？ 「お手伝い${cmd.yen}円 買い物」みたいに、円のあとに何をしたか書いてな`);
+    return;
+  }
   if (cmd.yen < 1 || cmd.yen > FREE_MAX_YEN) {
     reply(m, `<@${uid}> 金額つきのお手伝いは1回${FREE_MAX_YEN}円までやで。金額を直して書き直してな`);
     return;
   }
   const name = freeChoreName(cmd.what);
   const at = new Date(m.timestamp);
-  const bot = reply(m, `<@${uid}>の${name}（${cmd.yen}円）を受け付けたで\n親が${OK}で承認、${NG}で却下やで`);
+  const bot = reply(m, approvalText(m, `${name} ${cmd.yen}円`));
   sheet().appendRow([at, childName(m.author), "'" + uid, name, 1, cmd.yen, ST.WAIT, "'" + m.id, "'" + bot.id, '', '', FREE_NOTE]);
   react(bot.id, OK);
   react(bot.id, NG);
+}
+
+// 承認を聞く投稿：子どもの投稿を引用して、何の報告か一目で分かるようにする
+function approvalText(m, detail) {
+  const quote = String(m.content || '').split('\n').map(l => '> ' + l).join('\n');
+  return `<@${m.author.id}>の報告やで。承認しますか？\n${quote}\n内容：${detail}\n承認なら${OK}、却下なら${NG}を押してな`;
 }
 
 function freeChoreName(what) { return what ? `${what}のお手伝い` : 'お手伝い'; }
@@ -222,7 +236,7 @@ function handleReport(m, cmd) {
   const yen = amount(cmd.chore, before + cmd.count) - amount(cmd.chore, before);
   const label = cmd.count > 1 ? `${cmd.chore.name}×${cmd.count}` : cmd.chore.name;
 
-  const bot = reply(m, `<@${uid}>の${label}を受け付けたで（${yen}円の予定）\n親が${OK}で承認、${NG}で却下やで`);
+  const bot = reply(m, approvalText(m, `${label} ${yen}円の予定`));
   sh.appendRow([at, childName(m.author), "'" + uid, cmd.chore.name, cmd.count, '', ST.WAIT, "'" + m.id, "'" + bot.id, '', '', '']);
   react(bot.id, OK);
   react(bot.id, NG);
