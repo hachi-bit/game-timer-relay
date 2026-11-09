@@ -31,6 +31,8 @@
 
 ## 2. 仕様
 
+> 返信の文面は2026年11月に、関西弁をやめて標準語の短い文に変更した。下の返信例には古い文面が残っているところがあるので、正確な文面は「4. コード全文」か `返信パターン.md` を見る。
+
 ### 子ども複数人への対応
 
 - スクリプトプロパティ `CHILDREN` に登録した子ども（ユーザーID）の発言だけに反応する
@@ -359,7 +361,7 @@ function setupProperties() {
   // 1人用からの移行：CHILD_USER_ID があれば CHILDREN の初期値に使う
   const old = p.getProperty('CHILD_USER_ID');
   if (old && old !== '未設定' && p.getProperty('CHILDREN') === '未設定') p.setProperty('CHILDREN', old);
-  Logger.log(created.length ? '作成したで：' + created.join(', ') : '全部そろってたで');
+  Logger.log(created.length ? '作成しました：' + created.join(', ') : '全部そろっています');
   checkProperties();
 }
 
@@ -368,9 +370,9 @@ function checkProperties() {
   const p = PropertiesService.getScriptProperties();
   const missing = Object.keys(PROP_DEFAULTS).filter(k => !p.getProperty(k) || p.getProperty(k) === '未設定');
   if (missing.length) {
-    Logger.log('「未設定」のままの項目：' + missing.join(', ') + '\nプロジェクトの設定 → スクリプト プロパティで値を入れてな');
+    Logger.log('「未設定」のままの項目：' + missing.join(', ') + '\nプロジェクトの設定 → スクリプト プロパティで値を入れてください');
   } else {
-    Logger.log('プロパティは全部入ってるで');
+    Logger.log('プロパティは全部入っています');
   }
   // 確認をしない子どもが、CHILDREN の誰に当たっているか
   const v = p.getProperty('NO_STUDY_CHECK');
@@ -380,7 +382,7 @@ function checkProperties() {
       const hit = Object.keys(kids).filter(id => isNoStudyCheck(id)).map(id => `${kids[id] || '(呼び名なし)'} ${id}`);
       Logger.log(hit.length
         ? '勉強・提出・ゴミ捨ての確認をしない子ども：' + hit.join(', ')
-        : `NO_STUDY_CHECK（${v}）が CHILDREN の誰にも当たってないで。CHILDREN を「ID:さち」の形にするか、NO_STUDY_CHECK にIDを入れてな`);
+        : `NO_STUDY_CHECK（${v}）が CHILDREN の誰にも当たっていません。CHILDREN を「ID:さち」の形にするか、NO_STUDY_CHECK にIDを入れてください`);
     } catch (e) {
       Logger.log(String(e));
     }
@@ -397,8 +399,8 @@ function testRelay() {
   const ch = prop('CHANNEL_ID');
   const msgs = api('get', `/channels/${ch}/messages?limit=1`);
   Logger.log('取得OK：' + msgs.length + '件');
-  api('post', `/channels/${ch}/messages`, { content: '中継テストやで' });
-  Logger.log('投稿OK：チャンネルを確認してな');
+  api('post', `/channels/${ch}/messages`, { content: '中継テストです' });
+  Logger.log('投稿OK：チャンネルを確認してください');
 }
 
 // ===== 初期設定（最初に1回だけ実行） =====
@@ -445,7 +447,7 @@ function migrateToMultiChild() {
     const v = p.getProperty(k);
     if (v) { p.setProperty(`${k}_${first}`, v); p.deleteProperty(k); }
   });
-  Logger.log(`移行完了：${n}行を ${kids[first] || first} の記録にしたで`);
+  Logger.log(`移行完了：${n}行を ${kids[first] || first} の記録にしました`);
 }
 
 // ===== メイン処理 =====
@@ -524,8 +526,8 @@ function handleStudy(m) {
   const t = new Date(m.timestamp);
   studySheet().appendRow([t, childName(m.author), "'" + uid, "'" + m.id]);
   react(m);
-  let msg = `<@${uid}>の勉強おわりを受け付けたで（${fmtTime(t)}）\n・やるべき勉強は全部解いた？\n・答え合わせも全部おわった？\n・おわったものを机の上（親がわかる所）に置いたら「提出完了」と書いてな`;
-  if (needGarbageAsk(t, uid)) msg += '\n・' + GARBAGE_ASK;
+  let msg = `<@${uid}> 勉強終了 ${fmtTime(t)}\n全部解いた？答え合わせした？\n机に置いたら「提出完了」`;
+  if (needGarbageAsk(t, uid)) msg += '\n' + GARBAGE_ASK;
   reply(m, msg);
 }
 
@@ -535,8 +537,8 @@ function handleSubmit(m) {
   const t = new Date(m.timestamp);
   submitSheet().appendRow([t, childName(m.author), "'" + uid, "'" + m.id]);
   react(m);
-  let msg = `<@${uid}>の提出を受け付けたで（${fmtTime(t)}）。おわったものは机の上（親がわかる所）に置いたな？`;
-  if (!isNoStudyCheck(uid) && !hasStudyOn(uid, t)) msg += '\nただ、今日はまだ「勉強終了」が出てないで。勉強がおわってたら「勉強終了」も書いてな';
+  let msg = `<@${uid}> 提出完了 ${fmtTime(t)}`;
+  if (!isNoStudyCheck(uid) && !hasStudyOn(uid, t)) msg += '\n「勉強終了」がまだです';
   reply(m, msg);
 }
 
@@ -568,7 +570,7 @@ function handleStart(m, hours) {
     const limitEnd = addMin(start, limitH * 60);
     const forgotAt = addMin(limitEnd, SECOND_NOTICE_MIN);
     if (t < forgotAt) {
-      reply(m, `もうゲーム開始中やで（${fmtTime(start)}から、${fmtTime(limitEnd)}まで）`);
+      reply(m, `<@${uid}> もうゲーム中です（${fmtTime(start)}〜${fmtTime(limitEnd)}）`);
       return;
     }
     // 前回を「終了忘れ」で閉じる
@@ -583,12 +585,8 @@ function handleStart(m, hours) {
   const studied = hasStudyOn(uid, t);
   const submitted = hasSubmitOn(uid, t);
   if (!isNoStudyCheck(uid) && (!studied || !submitted)) {
-    const missing = [studied ? '' : '「勉強終了」', submitted ? '' : '「提出完了」'].filter(x => x).join('と');
-    const todo = [
-      studied ? '' : '勉強がおわったら「勉強終了」',
-      submitted ? '' : 'おわったものを机の上（親がわかる所）に置いたら「提出完了」',
-    ].filter(x => x).join('、') + 'と書いてな';
-    replyPing(m, [uid], `<@${uid}> 今日はまだ${missing}が出てないで！ ${todo}`);
+    const missing = [studied ? '' : '「勉強終了」', submitted ? '' : '「提出完了」'].filter(x => x).join('');
+    replyPing(m, [uid], `<@${uid}> ${missing}がまだです！`);
   }
   const note = isNoStudyCheck(uid) ? '' : [studied ? '' : '勉強おわりなし', submitted ? '' : '提出なし'].filter(x => x).join('・');
 
@@ -597,16 +595,16 @@ function handleStart(m, hours) {
   setLastAction(uid, { type: 'start', row: row, prevRow: prevRow });
   setLastUndo(uid, null);
 
-  let msg = `<@${uid}>のゲーム開始を受け付けたで（${fmtTime(t)}）。今回は${hours}時間、${fmtTime(addMin(t, hours * 60))}までやで`;
+  let msg = `<@${uid}> ゲーム開始 ${fmtTime(t)}（${hours}時間・${fmtTime(addMin(t, hours * 60))}まで）`;
   msg += bedtimeNote(t, addMin(t, hours * 60));
-  if (prevRow) msg += '\n前回は終了がなかったから「終了忘れ」で記録したで';
+  if (prevRow) msg += '\n前回は「終了忘れ」にしました';
   if (needGarbageAsk(t, uid)) msg += '\n' + GARBAGE_ASK;
   react(m);
   reply(m, msg);
 }
 
 // ===== ゴミ捨ての確認 =====
-const GARBAGE_ASK = '今日はゴミ捨ての日やで。ゴミ捨ての報告はした？ まだなら「ゴミ捨て完了」と書いてな';
+const GARBAGE_ASK = 'ゴミの日です。済んだら「ゴミ捨て完了」';
 
 // おこづかいボットが受け付ける「ゴミ捨て完了」「ゴミ捨て2完了」などの書き込みか
 // （ひらがな・カタカナ・漢字・全角数字・空白の違いは、おこづかいボットと同じように吸収する）
@@ -634,8 +632,8 @@ function needGarbageAsk(t, uid) {
 // ===== 「開始」「終了」だけのとき：何のことか聞き返す（記録はしない） =====
 function handleAsk(m, word) {
   const uid = m.author.id;
-  if (word === '開始') reply(m, `<@${uid}> なんの開始？ ゲームなら「ゲーム開始」と書いてな`);
-  else reply(m, `<@${uid}> なんの終了？ 「ゲーム終了」か「勉強終了」と書いてな`);
+  if (word === '開始') reply(m, `<@${uid}> 何の開始？「ゲーム開始」と書いてね`);
+  else reply(m, `<@${uid}> 何の終了？「ゲーム終了」か「勉強終了」と書いてね`);
 }
 
 // 終了の目安が寝る時間を過ぎるときに、開始の返信の最後に付ける一言（過ぎないときは空文字）
@@ -645,8 +643,8 @@ function bedtimeNote(start, limitEnd) {
   const label = hm.replace(/^(\d+):00$/, '$1時').replace(/^(\d+):(\d+)$/, '$1時$2分');
   const bed = new Date(`${Utilities.formatDate(start, 'Asia/Tokyo', 'yyyy-MM-dd')}T${hm}:00+09:00`);
   const hour = Number(Utilities.formatDate(start, 'Asia/Tokyo', 'H'));
-  if (start >= bed || hour < EARLY_MORNING_HOUR) return `。ただ、もう寝る時間を過ぎてるで`;
-  if (limitEnd > bed) return `。ただ、寝る時間やから${label}までやで`;
+  if (start >= bed || hour < EARLY_MORNING_HOUR) return `\n※もう寝る時間です`;
+  if (limitEnd > bed) return `\n※寝る時間なので${label}まで`;
   return '';
 }
 
@@ -656,7 +654,7 @@ function handleEnd(m) {
   const uid = m.author.id;
   const active = findActiveRow(uid);
   if (!active) {
-    reply(m, `<@${uid}>のゲーム開始の記録がないで`);
+    reply(m, `<@${uid}> ゲーム開始の記録がありません`);
     return;
   }
   const t = new Date(m.timestamp);
@@ -674,10 +672,10 @@ function handleEnd(m) {
   const total = dailyTotal(start, uid);
   react(m);
   if (forgot) {
-    reply(m, `<@${uid}>のゲーム終了を受け付けたで。ただ、日付が変わってたから「終了忘れ」として0:00で打ち切ったで（${fmtTime(start)}開始、記録は${fmtDur(min)}）。` +
-      `その日の合計は${fmtDur(total)}\n次からは、ゲームをやめたらすぐ「ゲーム終了」と書いてな`);
+    reply(m, `<@${uid}> 日付が変わったので0:00で「終了忘れ」にしました（${fmtTime(start)}開始・${fmtDur(min)}）\n` +
+      `やめたらすぐ「ゲーム終了」を書いてね`);
   } else {
-    reply(m, `<@${uid}>のゲーム終了を受け付けたで（${fmtTime(t)}）。今回は${fmtDur(min)}。今日の合計は${fmtDur(total)}`);
+    reply(m, `<@${uid}> ゲーム終了 ${fmtTime(t)}（今回${fmtDur(min)}・今日${fmtDur(total)}）`);
   }
 }
 
@@ -687,7 +685,7 @@ function handleUndo(m) {
   const uid = m.author.id;
   const la = getLastAction(uid);
   if (!la) {
-    reply(m, '取り消せるものがないで');
+    reply(m, '取り消せるものがありません');
     return;
   }
   // 取消の取消で元に戻せるよう、書き換える前の値を控えておく
@@ -701,12 +699,12 @@ function handleUndo(m) {
     // 備考（「勉強おわりなし」など）は残して、取消の印を足す
     const note = String(sh.getRange(la.row, C.NOTE).getValue() || '');
     sh.getRange(la.row, C.NOTE).setValue((note ? note + ' / ' : '') + `取消 ${fmtTime(new Date(m.timestamp))}`);
-    let msg = `<@${uid}>のゲーム開始を取り消したで`;
+    let msg = `<@${uid}> ゲーム開始を取り消しました`;
     if (la.prevRow) {
       sh.getRange(la.prevRow, C.END).clearContent();
       sh.getRange(la.prevRow, C.MIN).clearContent();
       sh.getRange(la.prevRow, C.STATUS).setValue(ST.ACTIVE);
-      msg += '\n前回の記録を開始中に戻したで';
+      msg += '\n前回の記録をゲーム中に戻しました';
     }
     react(m);
     reply(m, msg);
@@ -720,7 +718,7 @@ function handleUndo(m) {
     const start = sh.getRange(la.row, C.START).getValue();
     const limitH = sh.getRange(la.row, C.LIMIT).getValue();
     react(m);
-    reply(m, `<@${uid}>のゲーム終了を取り消したで。開始中に戻したで（${fmtTime(addMin(start, limitH * 60))}まで）`);
+    reply(m, `<@${uid}> ゲーム終了を取り消しました（${fmtTime(addMin(start, limitH * 60))}まで）`);
   }
   setLastAction(uid, null);
   setLastUndo(uid, undo);
@@ -732,7 +730,7 @@ function handleRedo(m) {
   const uid = m.author.id;
   const undo = getLastUndo(uid);
   if (!undo) {
-    reply(m, '取り消せるものがないで');
+    reply(m, '取り消せるものがありません');
     return;
   }
   const la = undo.action;
@@ -749,14 +747,14 @@ function handleRedo(m) {
     const start = sh.getRange(la.row, C.START).getValue();
     const limitH = sh.getRange(la.row, C.LIMIT).getValue();
     react(m);
-    reply(m, `<@${uid}>の取消を取り消したで。${fmtTime(start)}からの開始中に戻したで（${fmtTime(addMin(start, limitH * 60))}まで）`);
+    reply(m, `<@${uid}> 取消を戻しました（${fmtTime(start)}〜${fmtTime(addMin(start, limitH * 60))}）`);
   } else if (la.type === 'end') {
     sh.getRange(la.row, C.END).setValue(new Date(undo.end));
     sh.getRange(la.row, C.MIN).setValue(undo.min);
     sh.getRange(la.row, C.STATUS).setValue(undo.status || ST.DONE);
     const total = dailyTotal(sh.getRange(la.row, C.START).getValue(), uid);
     react(m);
-    reply(m, `<@${uid}>の取消を取り消したで。${fmtTime(new Date(undo.end))}に終了した記録に戻したで（今回は${fmtDur(undo.min)}、今日の合計は${fmtDur(total)}）`);
+    reply(m, `<@${uid}> 取消を戻しました（${fmtTime(new Date(undo.end))}終了・今回${fmtDur(undo.min)}・今日${fmtDur(total)}）`);
   }
   setLastAction(uid, la);
   setLastUndo(uid, null);
@@ -777,10 +775,10 @@ function checkNotice(now, active) {
   const child = String(sh.getRange(active, C.UID).getValue());
 
   if (now >= limitEnd && !n1) {
-    post(child, `<@${child}> ${limitH}時間たったで！そろそろ「ゲーム終了」してな（${fmtTime(start)}開始）`);
+    post(child, `<@${child}> ${limitH}時間たちました。「ゲーム終了」を書いてね`);
     sh.getRange(active, C.N1).setValue(now);
   } else if (n1 && !n2 && now >= addMin(limitEnd, SECOND_NOTICE_MIN)) {
-    post(child, `<@${child}> まだ「ゲーム終了」の記録がないで！${limitH}時間${SECOND_NOTICE_MIN}分たったで（${fmtTime(start)}開始）`);
+    post(child, `<@${child}> まだ「ゲーム終了」がありません（${limitH}時間${SECOND_NOTICE_MIN}分）`);
     sh.getRange(active, C.N2).setValue(now);
   }
 }
@@ -874,7 +872,7 @@ function children() {
     const name = i < 0 ? '' : x.slice(i + 1).trim();
     if (/^\d+$/.test(id)) map[id] = name;
   });
-  if (!Object.keys(map).length) throw new Error('CHILDREN にユーザーIDが入っていないで');
+  if (!Object.keys(map).length) throw new Error('CHILDREN にユーザーIDが入っていません');
   return map;
 }
 
@@ -924,8 +922,8 @@ function api(method, path, body) {
       Utilities.sleep(Math.ceil(wait * 1000) + 100);
       continue;
     }
-    if (code === 401) throw new Error('中継の合言葉（RELAY_SECRET）がVercelと一致していないで');
-    if (code === 400) throw new Error('中継に拒否されたで（許可されていない操作か、中継が古いかもしれへん）');
+    if (code === 401) throw new Error('中継の合言葉（RELAY_SECRET）がVercelと一致していません');
+    if (code === 400) throw new Error('中継に拒否されました（許可されていない操作か、中継が古い可能性があります）');
     if (code >= 300) throw new Error(`Discord API ${code}: ${text}`);
     return text ? JSON.parse(text) : null;
   }

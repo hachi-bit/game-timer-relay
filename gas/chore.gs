@@ -62,7 +62,7 @@ function setupProperties() {
   for (const [k, v] of Object.entries(PROP_DEFAULTS)) {
     if (!p.getProperty(k)) { p.setProperty(k, v); created.push(k); }
   }
-  Logger.log(created.length ? '作成したで：' + created.join(', ') : '全部そろってたで');
+  Logger.log(created.length ? '作成しました：' + created.join(', ') : '全部そろっています');
   checkProperties();
 }
 
@@ -70,9 +70,9 @@ function checkProperties() {
   const p = PropertiesService.getScriptProperties();
   const missing = Object.keys(PROP_DEFAULTS).filter(k => !p.getProperty(k) || p.getProperty(k) === '未設定');
   if (missing.length) {
-    Logger.log('「未設定」のままの項目：' + missing.join(', ') + '\nプロジェクトの設定 → スクリプト プロパティで値を入れてな');
+    Logger.log('「未設定」のままの項目：' + missing.join(', ') + '\nプロジェクトの設定 → スクリプト プロパティで値を入れてください');
   } else {
-    Logger.log('プロパティは全部入ってるで');
+    Logger.log('プロパティは全部入っています');
   }
 }
 
@@ -81,8 +81,8 @@ function testRelay() {
   const ch = prop('CHANNEL_ID');
   const msgs = api('get', `/channels/${ch}/messages?limit=1`);
   Logger.log('取得OK：' + msgs.length + '件');
-  api('post', `/channels/${ch}/messages`, { content: 'おこづかいボットの中継テストやで' });
-  Logger.log('投稿OK：チャンネルを確認してな');
+  api('post', `/channels/${ch}/messages`, { content: 'おこづかいボットの中継テストです' });
+  Logger.log('投稿OK：チャンネルを確認してください');
 }
 
 // ===== 初期設定（最初に1回だけ実行） =====
@@ -137,7 +137,7 @@ function processMessages() {
     if (!free && !cmd) continue; // 書き方が違うときは無反応
     try {
       if (free) handleFreeReport(m, free);
-      else if (cmd.ask) reply(m, `<@${m.author.id}> なにが完了？ 「ゴミ捨て完了」みたいに書いてな`);
+      else if (cmd.ask) reply(m, `<@${m.author.id}> 何が完了？「ゴミ捨て完了」のように書いてね`);
       else handleReport(m, cmd);
     } catch (e) {
       console.error(`処理エラー (${m.id}): ${e}`);
@@ -197,16 +197,16 @@ function parseFreeReport(text) {
 function handleFreeReport(m, cmd) {
   const uid = m.author.id;
   if (!cmd.what) {
-    reply(m, `<@${uid}> 何のお手伝い？ 「お手伝い${cmd.yen}円 買い物」みたいに、円のあとに何をしたか書いてな`);
+    reply(m, `<@${uid}> 何のお手伝い？「お手伝い${cmd.yen}円買い物」のように書いてね`);
     return;
   }
   if (cmd.yen < 1 || cmd.yen > FREE_MAX_YEN) {
-    reply(m, `<@${uid}> 金額つきのお手伝いは1回${FREE_MAX_YEN}円までやで。金額を直して書き直してな`);
+    reply(m, `<@${uid}> 1回${FREE_MAX_YEN}円までです。書き直してね`);
     return;
   }
   const name = freeChoreName(cmd.what);
   const at = new Date(m.timestamp);
-  const bot = reply(m, approvalText(m, `${name} ${cmd.yen}円`));
+  const bot = reply(m, approvalText(m, `${name}・${cmd.yen}円`));
   sheet().appendRow([at, childName(m.author), "'" + uid, name, 1, cmd.yen, ST.WAIT, "'" + m.id, "'" + bot.id, '', '', FREE_NOTE]);
   react(bot.id, OK);
   react(bot.id, NG);
@@ -215,7 +215,7 @@ function handleFreeReport(m, cmd) {
 // 承認を聞く投稿：子どもの投稿を引用して、何の報告か一目で分かるようにする
 function approvalText(m, detail) {
   const quote = String(m.content || '').split('\n').map(l => '> ' + l).join('\n');
-  return `<@${m.author.id}>の報告やで。承認しますか？\n${quote}\n内容：${detail}\n承認なら${OK}、却下なら${NG}を押してな`;
+  return `<@${m.author.id}> の報告。承認しますか？\n${quote}\n${detail}（${OK}承認 ${NG}却下）`;
 }
 
 function freeChoreName(what) { return what ? `${what}のお手伝い` : 'お手伝い'; }
@@ -236,7 +236,7 @@ function handleReport(m, cmd) {
   const yen = amount(cmd.chore, before + cmd.count) - amount(cmd.chore, before);
   const label = cmd.count > 1 ? `${cmd.chore.name}×${cmd.count}` : cmd.chore.name;
 
-  const bot = reply(m, approvalText(m, `${label} ${yen}円の予定`));
+  const bot = reply(m, approvalText(m, `${label}・${yen}円`));
   sh.appendRow([at, childName(m.author), "'" + uid, cmd.chore.name, cmd.count, '', ST.WAIT, "'" + m.id, "'" + bot.id, '', '', '']);
   react(bot.id, OK);
   react(bot.id, NG);
@@ -303,8 +303,8 @@ function approve(row, parentId) {
   const ym = ymKey(at);
   const total = monthTotal(uid, ym);
   const late = ym !== ymKey(now);
-  const head = late ? `前月分の追加承認やで：` : '';
-  replyTo(String(v[C.BOTID - 1]), `${head}<@${uid}>の${label}を承認したで +${yen}円（${monthLabel(ym)}の合計 ${fmtYen(total)}円）`);
+  const head = late ? `【前月分】` : '';
+  replyTo(String(v[C.BOTID - 1]), `${head}<@${uid}> ${label} 承認 +${yen}円（${monthLabel(ym)}合計 ${fmtYen(total)}円）`);
 }
 
 function reject(row, parentId) {
@@ -315,7 +315,7 @@ function reject(row, parentId) {
   sh.getRange(row, C.STATUS).setValue(ST.NG);
   sh.getRange(row, C.DONEAT).setValue(new Date());
   sh.getRange(row, C.BY).setValue("'" + parentId);
-  replyTo(String(v[C.BOTID - 1]), `<@${String(v[C.UID - 1])}>の${label}は却下されたで`);
+  replyTo(String(v[C.BOTID - 1]), `<@${String(v[C.UID - 1])}> ${label} 却下`);
 }
 
 // ===== 毎朝のまとめ（未承認・保留） =====
@@ -351,8 +351,8 @@ function dailyDigest(now) {
 
   const mention = parents.map(id => `<@${id}>`).join(' ');
   const sections = [];
-  if (held.length) sections.push({ title: `保留になってる報告が${held.length}件あるで（${OK}と${NG}の両方が押されてる。どっちか外してな）`, lines: held });
-  if (waiting.length) sections.push({ title: `まだ承認されてない報告が${waiting.length}件あるで`, lines: waiting });
+  if (held.length) sections.push({ title: `保留 ${held.length}件（${OK}と${NG}の両方が押されています。どちらかを外してください）`, lines: held });
+  if (waiting.length) sections.push({ title: `未承認 ${waiting.length}件`, lines: waiting });
   // 1投稿に収まるよう分けて投稿する。メンション通知は最初の投稿だけ
   let first = true;
   for (const sec of sections) {
@@ -376,13 +376,13 @@ function monthlyReport() {
   const now = new Date();
   const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const ym = ymKey(prev);
-  const lines = [`${monthLabel(ym)}のおこづかいやで`];
+  const lines = [`${monthLabel(ym)}のおこづかい`];
   for (const uid of Object.keys(children())) {
     const total = monthTotal(uid, ym);
     const wait = rowsOf(uid, ym).filter(r => r[C.STATUS - 1] === ST.WAIT).length;
     lines.push(`<@${uid}>：${fmtYen(total)}円` + (wait ? `（未承認 ${wait}件）` : ''));
   }
-  lines.push('未承認の分は、あとで承認されたら追加で知らせるで');
+  lines.push('未承認の分は、承認されたら追加でお知らせします');
   post(lines.join('\n'));
 }
 
@@ -451,13 +451,13 @@ function children() {
     const id = (i < 0 ? x : x.slice(0, i)).trim();
     if (/^\d+$/.test(id)) map[id] = i < 0 ? '' : x.slice(i + 1).trim();
   });
-  if (!Object.keys(map).length) throw new Error('CHILDREN にユーザーIDが入っていないで');
+  if (!Object.keys(map).length) throw new Error('CHILDREN にユーザーIDが入っていません');
   return map;
 }
 
 function parentIds() {
   const ids = idList(prop('PARENTS')).filter(x => /^\d+$/.test(x));
-  if (!ids.length) throw new Error('PARENTS にユーザーIDが入っていないで');
+  if (!ids.length) throw new Error('PARENTS にユーザーIDが入っていません');
   return ids;
 }
 
@@ -484,8 +484,8 @@ function api(method, path, body) {
       Utilities.sleep(Math.ceil(wait * 1000) + 100);
       continue;
     }
-    if (code === 401) throw new Error('中継の合言葉（RELAY_SECRET）がVercelと一致していないで');
-    if (code === 400) throw new Error('中継に拒否されたで（許可されていない操作か、中継が古いかもしれへん）');
+    if (code === 401) throw new Error('中継の合言葉（RELAY_SECRET）がVercelと一致していません');
+    if (code === 400) throw new Error('中継に拒否されました（許可されていない操作か、中継が古い可能性があります）');
     if (code >= 300) throw new Error(`Discord API ${code}: ${text}`);
     return text ? JSON.parse(text) : null;
   }
